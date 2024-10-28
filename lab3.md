@@ -9,6 +9,8 @@ and a cost-based optimizer. You have freedom as to exactly what you
 implement, but we recommend using something similar to the Selinger
 cost-based optimizer discussed in class (Lecture 9).
 
+在本实验中，您将在SimpleDB之上实现一个查询优化器。主要任务包括实现一个选择性估计框架和一个基于成本的优化器。您可以自由选择具体实现什么，但我们建议您使用类似于课堂上讨论的基于Selinger成本的优化器（第9讲）。
+
 The remainder of this document describes what is involved in
 adding optimizer support and provides a basic outline of how
 you do so.
@@ -49,12 +51,13 @@ steps are given in Section 2 below.
    it to estimate selectivities of filters and cost of
    scans, using histograms (skeleton provided for the <tt>IntHistogram</tt> class) or some
    other form of statistics of your devising.
+*  在<tt>TableStats</tt>类中实现方法，使用直方图（为<tt>IntHistogram</tt>类提供的框架）或您设计的其他形式的统计数据来估计过滤器的选择性和扫描的成本
 *  Implement the methods in the <tt>JoinOptimizer</tt> class that
    allow it to estimate the cost and selectivities of joins.
 *  Write the <tt>orderJoins</tt> method in <tt>JoinOptimizer</tt>. This method must produce
    an optimal ordering for a series of joins (likely using the
    Selinger algorithm), given statistics computed in the previous two steps.
-   
+*  *实现<tt>JoinOptimizer</tt>类中的方法，允许它估计连接的成本和选择性。*在<tt>JoinOptimizer</tt>中写入<tt>orderJoins</tt>方法。根据前两步计算的统计数据，该方法必须为一系列连接生成最优排序（可能使用Selinger算法）
 ##  2. Optimizer outline
 
 Recall that the main idea of a cost-based optimizer is to:
@@ -109,6 +112,7 @@ the basic operation is as follows:
     <tt>LogicalPlan</tt> instance it has constructed.  The <tt>physicalPlan</tt> method returns a
     <tt>DBIterator</tt> object that can be used to actually run the query.
     
+
 In the exercises to come, you will implement the methods that help
 <tt>physicalPlan</tt> devise an optimal plan.
 
@@ -302,7 +306,7 @@ While implementing your simple solution, you  should keep in mind the following:
 
 <!--  
   * <a name="change">The following three paragraphs are different in this version of the lab. </a> *
-  .-->
+    .-->
 *  For equality joins, when one of the attributes is a primary key, the number of tuples produced by the join cannot
    be larger than the cardinality of the non-primary key attribute.
 * For equality joins when there is no primary key, it's hard to say much about what the size of the output
