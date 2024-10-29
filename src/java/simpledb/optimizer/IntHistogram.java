@@ -115,13 +115,13 @@ public class IntHistogram {
                 {
                     return 1.0;
                 }
-                if(v<min)
+                if(v<=min)
                 {
                     return 0.0;
                 }
                 return lessBase;
             case GREATER_THAN:
-                if(v>max)
+                if(v>=max)
                 {
                     return 0.0;
                 }

@@ -1,12 +1,16 @@
 package simpledb.optimizer;
 
 import simpledb.common.Database;
+import simpledb.common.DbException;
 import simpledb.common.Type;
 import simpledb.execution.Predicate;
 import simpledb.execution.SeqScan;
 import simpledb.storage.*;
 import simpledb.transaction.Transaction;
+import simpledb.transaction.TransactionAbortedException;
+import simpledb.transaction.TransactionId;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -24,6 +28,15 @@ public class TableStats {
     private static final ConcurrentMap<String, TableStats> statsMap = new ConcurrentHashMap<>();
 
     static final int IOCOSTPERPAGE = 1000;
+    private int tableId;
+    private HeapFile heapFile;
+    private int ntups;
+    private ConcurrentHashMap<Integer,IntHistogram> field_histogram = new ConcurrentHashMap<>();
+    private int numfield;
+    private int numpages;
+    private int ioCostPerPage;
+    private int[] max;
+    private int[] min;
 
     public static TableStats getTableStats(String tablename) {
         return statsMap.get(tablename);
@@ -87,6 +100,77 @@ public class TableStats {
         // necessarily have to (for example) do everything
         // in a single scan of the table.
         // some code goes here
+        this.tableId = tableid;
+        this.ioCostPerPage = ioCostPerPage;
+        TransactionId tid = new TransactionId();
+        //根据tableid找到对应的File
+        heapFile = (HeapFile) Database.getCatalog().getDatabaseFile(tableid);
+        DbFileIterator dbFileIterator = heapFile.iterator(tid);
+        numfield = heapFile.getTupleDesc().numFields();
+        numpages = heapFile.numPages();
+        max = new int[numfield];
+        min = new int[numfield];
+        Arrays.fill(max, Integer.MIN_VALUE);
+        Arrays.fill(min, Integer.MAX_VALUE);
+        //迭代器要先开启
+        try {
+            dbFileIterator.open();
+        } catch (DbException e) {
+            throw new RuntimeException(e);
+        } catch (TransactionAbortedException e) {
+            throw new RuntimeException(e);
+        }
+        //遍历一次找到个字段的最值以及元组数目
+        while(true)
+        {
+            Tuple tuple = null;
+            try {
+                if (!dbFileIterator.hasNext()) break;
+                tuple = dbFileIterator.next();
+            } catch (DbException e) {
+                throw new RuntimeException(e);
+            } catch (TransactionAbortedException e) {
+                throw new RuntimeException(e);
+            }
+            for (int i = 0; i < numfield; i++) {
+                if(((IntField)tuple.getField(i)).getValue()>max[i])
+                {
+                    max[i] = ((IntField)tuple.getField(i)).getValue();
+                }
+                if (((IntField)tuple.getField(i)).getValue()<min[i])
+                {
+                    min[i] = ((IntField)tuple.getField(i)).getValue();
+                }
+            }
+            ntups++;
+        }
+        //为每个字段建立一个直方图
+        for (int i = 0; i < numfield; i++) {
+            field_histogram.put(i,new IntHistogram(10,min[i],max[i]));
+        }
+        try {
+            dbFileIterator.rewind();
+        } catch (DbException e) {
+            throw new RuntimeException(e);
+        } catch (TransactionAbortedException e) {
+            throw new RuntimeException(e);
+        }
+        //将元组中各字段的值加入到对应的直方图
+        while(true)
+        {
+            Tuple tuple = null;
+            try {
+                if (!dbFileIterator.hasNext()) break;
+                tuple = dbFileIterator.next();
+            } catch (DbException e) {
+                throw new RuntimeException(e);
+            } catch (TransactionAbortedException e) {
+                throw new RuntimeException(e);
+            }
+            for (int i = 0; i < numfield; i++) {
+                field_histogram.get(i).addValue(((IntField)tuple.getField(i)).getValue());
+            }
+        }
     }
 
     /**
@@ -103,7 +187,7 @@ public class TableStats {
      */
     public double estimateScanCost() {
         // some code goes here
-        return 0;
+        return 1.0*this.ioCostPerPage*numpages*2;
     }
 
     /**
@@ -117,7 +201,7 @@ public class TableStats {
      */
     public int estimateTableCardinality(double selectivityFactor) {
         // some code goes here
-        return 0;
+        return (int)(ntups*selectivityFactor);
     }
 
     /**
@@ -150,7 +234,7 @@ public class TableStats {
      */
     public double estimateSelectivity(int field, Predicate.Op op, Field constant) {
         // some code goes here
-        return 1.0;
+        return field_histogram.get(field).estimateSelectivity(op,((IntField)constant).getValue());
     }
 
     /**
@@ -158,7 +242,7 @@ public class TableStats {
      * */
     public int totalTuples() {
         // some code goes here
-        return 0;
+        return ntups;
     }
 
 }

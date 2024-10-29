@@ -10,6 +10,8 @@ import java.util.*;
 import javax.swing.*;
 import javax.swing.tree.*;
 
+import static java.lang.String.join;
+
 /**
  * The JoinOptimizer class is responsible for ordering a series of joins
  * optimally, and for selecting the best instantiation of a join for a given
@@ -17,7 +19,7 @@ import javax.swing.tree.*;
  */
 public class JoinOptimizer {
     final LogicalPlan p;
-    final List<LogicalJoinNode> joins;
+    final List<LogicalJoinNode> joins ;
 
     /**
      * Constructor
@@ -130,7 +132,8 @@ public class JoinOptimizer {
             // HINT: You may need to use the variable "j" if you implemented
             // a join algorithm that's more complicated than a basic
             // nested-loops join.
-            return -1.0;
+            // scancost(t1) + ntups(t1) x scancost(t2) //IO cost + ntups(t1) x ntups(t2) //CPU cost
+            return cost1 + card1*cost2 + card2*card1;
         }
     }
 
@@ -176,13 +179,33 @@ public class JoinOptimizer {
                                                    Map<String, Integer> tableAliasToId) {
         int card = 1;
         // some code goes here
+        if(joinOp == Predicate.Op.EQUALS) {
+            if(t1pkey == true && t2pkey == true) {
+                card = card1 < card2 ? card1:card2;
+            }
+            else if(t1pkey == true && t2pkey == false) {
+                card = card2;
+            }
+            else if(t1pkey == false && t2pkey == true) {
+                card = card1;
+            }
+            else
+            {
+                card = card1 > card2 ? card1:card2;
+            }
+        }
+        else
+        {
+            card = (int)(card1*card2*0.30);
+        }
+
         return card <= 0 ? 1 : card;
     }
 
     /**
      * Helper method to enumerate all of the subsets of a given size of a
      * specified vector.
-     * 
+     *
      * @param v
      *            The vector whose subsets are desired
      * @param size
@@ -238,6 +261,31 @@ public class JoinOptimizer {
 
         // some code goes here
         //Replace the following
+        CostCard bestCost = new CostCard();
+        PlanCache bestplanCache = new PlanCache();
+        for (int i = 1; i <= joins.size(); i++) {
+            Set<Set<LogicalJoinNode>> subjoins = enumerateSubsets(joins,i);
+            for (Set<LogicalJoinNode> subjoin : subjoins) {
+                double bestCostSoFar = Double.MAX_VALUE;
+                bestCost = new CostCard();
+                for (LogicalJoinNode lnode : subjoin) {
+                    CostCard costCard=computeCostAndCardOfSubplan(stats,filterSelectivities,lnode,subjoin,bestCostSoFar,bestplanCache);
+                    if(costCard == null) {continue;}
+                    bestCostSoFar = costCard.cost;
+                    bestCost = costCard;
+                }
+                if(bestCostSoFar != Double.MAX_VALUE) {
+                    bestplanCache.addPlan(subjoin,bestCost.cost,bestCost.card,bestCost.plan);
+                }
+            }
+        }
+        if (explain){
+            printJoins(bestCost.plan, bestplanCache, stats, filterSelectivities);
+        }
+        // 如果joins传进来的长度为0，则计划就为空
+        if(bestCost.plan != null){
+            return bestCost.plan;
+        }
         return joins;
     }
 
