@@ -80,12 +80,22 @@ As we discussed in class, this means that:
 *  On transaction commit, you should force dirty pages to disk (e.g.,
    write the pages out) (this is FORCE).
    
+
 To further simplify your life, you may assume that SimpleDB will not crash
 while processing a `transactionComplete` command.  Note that
 these three points mean that you do not need to implement log-based
 recovery in this lab, since you will never need to undo any work (you never evict
 dirty pages) and you will never need to redo any work (you force
 updates on commit and will not crash during commit processing).
+
+为了简化你的工作，我们建议你实现一个不偷取/强制的缓冲区管理策略。
+
+正如我们在课堂上讨论的那样，这意味着：
+
+* 如果脏页（已更新的页）被一个未提交的事务锁定，你不应该从缓冲池中驱逐这些脏页（这是不偷取）。
+* 在事务提交时，你应该将脏页强制写入磁盘（例如，写出这些页）（这是强制）。
+
+为了进一步简化你的工作，你可以假设SimpleDB在处理`transactionComplete`命令时不会崩溃。请注意，这三点意味着在这个实验中你不需要实现基于日志的恢复机制，因为你永远不需要撤销任何工作（你永远不会驱逐脏页），也永远不需要重做任何工作（你在提交时强制更新，并且在提交处理过程中不会崩溃）。
 
 ###  2.4. Granting Locks
 
@@ -105,13 +115,31 @@ to a transaction when it is requested.
 You will need to implement shared and exclusive locks; recall that these
 work as follows:
 
-*  Before a transaction can read an object, it must have a shared lock on it.
-*  Before a transaction can write an object, it must have an exclusive lock on it.
-*  Multiple transactions can have a shared lock on an object.
-*  Only one transaction may have an exclusive lock on an object.
+* Before a transaction can read an object, it must have a shared lock on it.
+
+* Before a transaction can write an object, it must have an exclusive lock on it.
+
+* Multiple transactions can have a shared lock on an object.
+
+* Only one transaction may have an exclusive lock on an object.
+
 *  If transaction *t* is the only transaction holding a shared lock on
    an object *o*, *t* may *upgrade*
    its lock on *o* to an exclusive lock.
+   
+   你需要在SimpleDB中（例如在`BufferPool`里）添加调用，这些调用允许调用者代表特定事务请求或释放对特定对象的（共享或独占）锁。
+   
+   我们建议在*页*级别进行锁定；为了测试的简便，请不要实现表级别的锁定（即使这是可能的）。本文档的其余部分以及我们的单元测试都假设使用页级别的锁定。
+   
+   你需要创建数据结构来跟踪每个事务持有的锁，并在请求时检查是否应该授予某个事务一个锁。
+   
+   你将需要实现共享锁和独占锁；请记住它们的工作方式如下：
+   
+   * 在事务可以读取一个对象之前，它必须对该对象持有共享锁。
+   * 在事务可以写入一个对象之前，它必须对该对象持有独占锁。
+   * 多个事务可以对同一个对象持有共享锁。
+   * 只能有一个事务对一个对象持有独占锁。
+   * 如果事务*t*是唯一持有对象*o*的共享锁的事务，那么*t*可以将其在*o*上的锁*升级*为独占锁。
 
 If a transaction requests a lock that cannot be immediately granted, your code
 should *block*, waiting for that lock to become available (i.e., be
@@ -120,6 +148,8 @@ Be careful about race conditions in your lock implementation --- think about
 how concurrent invocations to your lock may affect the behavior. 
 (you way wish to read about <a href="http://docs.oracle.com/javase/tutorial/essential/concurrency/sync.html">
 Synchronization</a> in Java).
+
+在实现锁时要小心竞态条件——考虑并发调用你的锁可能如何影响行为。（你可能希望阅读关于Java中<a href="http://docs.oracle.com/javase/tutorial/essential/concurrency/sync.html">同步</a>的内容）
 
 ***
 
@@ -141,6 +171,15 @@ you.
 
 You may need to implement the next exercise before your code passes
 the unit tests in LockingTest.
+
+在BufferPool中编写获取和释放锁的方法。假设你使用的是页级锁定，你需要完成以下工作：
+
+修改getPage()方法，在返回一个页之前阻塞并获取所需的锁。
+实现unsafeReleasePage()方法。这个方法主要用于测试以及在事务结束时使用。
+实现holdsLock()方法，以便练习2中的逻辑可以确定某个页是否已经被某个事务锁定。
+你可能会发现定义一个负责维护关于事务和锁的状态的LockManager类是有帮助的，但设计决策由你自己决定。
+
+在你的代码通过LockingTest中的单元测试之前，你可能需要先实现下一个练习
 
 ***
 
@@ -455,8 +494,8 @@ You can also post on the class page on Piazza if you feel you have run into a bu
   autograder score until you fix them. If this is an issue for you, contact us to discuss options.
   
 * Given that this lab deals with concurrency, we will rerun the autograder after the due date to discourage
-trying buggy code until lucky. It is your responsibility to ensure that your code **reliably** passes
-the tests.
+  trying buggy code until lucky. It is your responsibility to ensure that your code **reliably** passes
+  the tests.
   
 * This lab has a higher percentage of manual grading at 50% compared to previous labs. Specifically, we will be
 very unhappy if your concurrency handling is bogus (e.g., inserting Thread.sleep(1000) until a race disappears).
