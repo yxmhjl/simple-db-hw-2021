@@ -335,6 +335,7 @@ public class TestUtil {
 
         public void run() {
             try {
+                System.out.println(333);
                 Database.getBufferPool().getPage(tid, pid, perm);
                 synchronized (alock) {
                     acquired = true;

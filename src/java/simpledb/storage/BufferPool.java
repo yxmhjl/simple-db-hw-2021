@@ -8,6 +8,7 @@ import simpledb.transaction.TransactionId;
 
 import java.io.*;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -30,6 +31,7 @@ public class BufferPool {
 
     private static int pageSize = DEFAULT_PAGE_SIZE;
 
+    private static int MAX_SIZE = 20;
     /** Default number of pages passed to the constructor. This is used by
     other classes. BufferPool should use the numPages argument to the
     constructor instead. */
@@ -54,11 +56,68 @@ public class BufferPool {
     private static class LockManage{
         //定义一个哈希表，键值是要上锁的页，值为一个事务链表
         ConcurrentHashMap<PageId,transationlocklist> locks;
+        private WaitforGraph waitforGraph;
         public LockManage() {
             locks = new ConcurrentHashMap<>();
+            waitforGraph = new WaitforGraph();
         }
-
-        //加锁方法
+        //内部类等待依赖图
+        public  class WaitforGraph{
+            //存放事务的列表
+            ArrayList<node> transationnode = new ArrayList<>();
+            //存放事务之间的等待关系,默认初始化为0。
+            int[][] waitRelation = new int[MAX_SIZE][MAX_SIZE];
+            //一个哈希表将事务号转换成整形，方便存放
+            ConcurrentHashMap<TransactionId,Integer> index = new ConcurrentHashMap<>();
+            public void addrelation(TransactionId tid1,TransactionId tid2)
+            {
+                int index1 = -1;
+                if(index.get(tid1)>=0);
+                {
+                    index1 = index.get(tid1);
+                }
+                int index2 = -1;
+                if(index.get(tid2)>=0)
+                {
+                    index2 = index.get(tid2);
+                }
+                waitRelation[index1][index2] = 1;
+            }
+            public void addtransation(TransactionId tid,PageId pid,int locktype)
+            {
+                node tempnode = new node();
+                tempnode.pid = pid;
+                tempnode.locktype = locktype;
+                tempnode.tid = tid;
+                transationnode.add(tempnode);
+                index.put(tid, transationnode.size());
+                //判断要加的边
+                for (int i = 0; i < transationnode.size(); i++) {
+                    node node1 = transationnode.get(i);
+                    if(node1.pid == pid && node1.tid != tid)
+                    {
+                        if(node1.locktype == 1)
+                        {
+                            addrelation(node1.tid,tid);
+                        }
+                        else if(node1.locktype == 0)
+                        {
+                            if(locktype == 1)
+                            {
+                                addrelation(node1.tid,tid);
+                            }
+                        }
+                    }
+                }
+                isDeadLock(tid);
+            }
+            public class node{
+                TransactionId tid;
+                PageId pid;
+                int locktype;
+            }
+        }
+        //加锁,
         public synchronized boolean lock(TransactionId tid,PageId pid,int lock_type)
         {
             //如果没有当前数据项的事务锁列表则创建
@@ -89,6 +148,8 @@ public class BufferPool {
             tailnode.prev.next = templocklistnode;
             templocklistnode.prev = tailnode.prev;
             tailnode.prev = templocklistnode;
+            //这一行会导致Transactiontest不过
+            waitforGraph.addtransation(tid,pid,lock_type);
             //是否可以加锁，如果可以则按照链表次序加锁，加锁成功返回true，加锁失败返回f
             if(!addlock(locks.get(pid)))
             {
@@ -193,7 +254,58 @@ public class BufferPool {
                 templocklistnode = templocklistnode.next;
             }
         }
+        //判断是否有死锁lockManage.isDeadLock();
+        public void isDeadLock(TransactionId tid){
+            if(isCyclic())
+            {
+                try {
+                    throw new TransactionAbortedException();
+                } catch (TransactionAbortedException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+            for (int i = 0; i < MAX_SIZE; i++) {
+                for (int j = 0; j < MAX_SIZE; j++) {
+                    System.out.print(waitforGraph.waitRelation[i][j]);
+                }
+                System.out.println();
+            }
+            System.out.println("----------------------------");
+        }
+        // 检测环
+        public boolean isCyclic() {
+            boolean[] visited = new boolean[MAX_SIZE];
+            boolean[] recStack = new boolean[MAX_SIZE];
 
+            for (int i = 0; i < MAX_SIZE; i++) {
+                if (isCyclicUtil(i, visited, recStack)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        // 深度优先搜索
+        private boolean isCyclicUtil(int i, boolean[] visited, boolean[] recStack) {
+            if (recStack[i]) {
+                return true;
+            }
+            if (visited[i]) {
+                return false;
+            }
+            visited[i] = true;
+            recStack[i] = true;
+
+            for (int j = 0; j < MAX_SIZE; j++) {
+                if (waitforGraph.waitRelation[i][j] == 1) {
+                    if (isCyclicUtil(j, visited, recStack)) {
+                        return true;
+                    }
+                }
+            }
+
+            recStack[i] = false;
+            return false;
+        }
         //看一个事务在一个数据项上是否有锁
         public boolean hooldslock(TransactionId tid,PageId pid)
         {
@@ -306,6 +418,8 @@ public class BufferPool {
             return head;
         }
     }
+
+
 
 
     public static int getPageSize() {
@@ -470,11 +584,11 @@ public class BufferPool {
                 //脏页则重新读取
                 if(entry.getValue().value.isDirty()!=null)
                 {
+                    //这里注意不能在缓冲池里请求而是磁盘上请求pagid这一页。
                     Page page = null;
                     DbFile file = Database.getCatalog().getDatabaseFile(entry.getKey().getTableId());
                     page = file.readPage(entry.getKey());
-
-                    //在原位替换
+                    //在原位替换，而不是添加，添加可能会挤掉一些页面。
                     lruCache.map.get(entry.getKey()).value = page;
                 }
             }
