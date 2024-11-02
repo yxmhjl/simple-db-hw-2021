@@ -3,7 +3,6 @@ package simpledb.storage;
 import simpledb.common.Database;
 import simpledb.common.Permissions;
 import simpledb.common.DbException;
-import simpledb.common.DeadlockException;
 import simpledb.transaction.TransactionAbortedException;
 import simpledb.transaction.TransactionId;
 
@@ -38,6 +37,7 @@ public class BufferPool {
     private final int numPages;
     private final ConcurrentHashMap<PageId,Page> pages = new ConcurrentHashMap<>();
     private LRUCache lruCache;
+    private LockManage lockManage;
 
     /**
      * Creates a BufferPool that caches up to numPages pages.
@@ -48,7 +48,265 @@ public class BufferPool {
         // some code goes here
         this.numPages = numPages;
         this.lruCache = new LRUCache(numPages);
+        this.lockManage = new LockManage();
     }
+
+    private static class LockManage{
+        //定义一个哈希表，键值是要上锁的页，值为一个事务链表
+        ConcurrentHashMap<PageId,transationlocklist> locks;
+        public LockManage() {
+            locks = new ConcurrentHashMap<>();
+        }
+
+        //加锁方法
+        public synchronized boolean lock(TransactionId tid,PageId pid,int lock_type)
+        {
+            //如果没有当前数据项的事务锁列表则创建
+            if(!locks.containsKey(pid))
+            {
+                locks.put(pid, getheadandtaillist());
+                locks.get(pid).key = pid;
+            }
+            //新建一个事务结点
+            transationlocklist templocklistnode = new transationlocklist();
+            //初始化
+            templocklistnode.tid = tid;
+            templocklistnode.locktype = lock_type;
+            //将结点放进头尾指针中去
+            //首先找到链表末尾
+            transationlocklist tailnode;
+            transationlocklist nownode = locks.get(pid);
+            while(true)
+            {
+                if(nownode.istail)
+                {
+                    tailnode = nownode;
+                    break;
+                }
+                nownode = nownode.next;
+            }
+            templocklistnode.next = tailnode;
+            tailnode.prev.next = templocklistnode;
+            templocklistnode.prev = tailnode.prev;
+            tailnode.prev = templocklistnode;
+            //是否可以加锁，如果可以则按照链表次序加锁，加锁成功返回true，加锁失败返回f
+            if(!addlock(locks.get(pid)))
+            {
+                try {
+                    wait();
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+            else
+            {
+                return  true;
+            }
+            return false;
+        }
+
+        //解锁，同时考虑解锁后发生的可能的加锁
+        public synchronized void unlock(TransactionId tid,PageId pid,int lock_type,boolean remove)
+        {
+            if(!locks.containsKey(pid))
+            {
+//              throw DbException;
+            }
+            else
+            {
+                transationlocklist templocklistnode = locks.get(pid).next;
+                transationlocklist unlocknode;
+                //找到要删除的结点
+                while(!templocklistnode.istail)
+                {
+                    if(templocklistnode.tid == tid && templocklistnode.locktype == lock_type)
+                    {
+                        if(!templocklistnode.isalocked)
+                        {
+//                            throw DbException;
+                        }
+                        else
+                        {
+                            unlocknode = templocklistnode;
+                            //因为是直接遍历求锁的状态，所以现在直接删除即可
+                            unlocknode.prev.next = unlocknode.next;
+                            unlocknode.next.prev = unlocknode.prev;
+                            break;
+                        }
+                    }
+                    templocklistnode = templocklistnode.next;
+                }
+                //删除该节点看是否可以加新的锁
+                if(remove)
+                {
+                    notifyAll();
+                    addlock(locks.get(pid));
+                }
+            }
+        }
+        //事务终止
+        public void abort(TransactionId tid,int lock_type)
+        {
+            //删除每个数据项中该事务的s锁和x锁
+            //先删除s锁，但不执行下一步的加锁
+            //然后删除x锁，看本数据项的锁链表看是否能加锁
+            for (Map.Entry<PageId, transationlocklist> entry : locks.entrySet()) {
+                PageId pid = entry.getKey();
+                unlock(tid, pid, 0, false);
+                unlock(tid, pid, 1, true);
+            }
+        }
+        //升级锁，当只有当前事务持有该数据项的s锁的时候能够升级
+        public void uplock(TransactionId tid,PageId pid)
+        {
+            int slock = 0;
+            int xlock = 0;
+            transationlocklist templocklistnode = locks.get(pid).next;
+            while(!templocklistnode.istail)
+            {
+                if(templocklistnode.isalocked)
+                {
+                    //上了s锁
+                    if(templocklistnode.locktype == 0)
+                    {
+                        slock++;
+                    }
+                    //上了x锁
+                    if(templocklistnode.locktype == 1)
+                    {
+                        xlock++;
+                    }
+                }
+                templocklistnode = templocklistnode.next;
+            }
+            templocklistnode = locks.get(pid).next;
+            while(!templocklistnode.istail)
+            {
+                if(templocklistnode.tid == tid)
+                {
+                    if(slock == 1 && templocklistnode.locktype == 0
+                    && templocklistnode.isalocked == true && xlock == 0)
+                    {
+                        templocklistnode.locktype = 1;
+                    }
+                }
+                templocklistnode = templocklistnode.next;
+            }
+        }
+
+        //看一个事务在一个数据项上是否有锁
+        public boolean hooldslock(TransactionId tid,PageId pid)
+        {
+            if(locks.get(pid)==null)
+            {
+                return false;
+            }
+            transationlocklist templocklistnode = locks.get(pid).next;
+            while(!templocklistnode.istail)
+            {
+                if(templocklistnode.tid == tid && templocklistnode.isalocked == true)
+                {
+                    return true;
+                }
+                templocklistnode = templocklistnode.next;
+            }
+            return false;
+        }
+
+        //获取锁的类型
+        public int locktype(TransactionId tid,PageId pid){
+            transationlocklist templocklistnode = locks.get(pid).next;
+            while(!templocklistnode.istail)
+            {
+                if(templocklistnode.tid == tid && templocklistnode.isalocked == true)
+                {
+                    return templocklistnode.locktype;
+                }
+                templocklistnode = templocklistnode.next;
+            }
+            return -1;
+        }
+
+        //看能不能继续加锁
+        public boolean addlock(transationlocklist headnode)
+        {
+            int slock = 0;
+            int xlock = 0;
+            boolean iscanlock = false;
+            transationlocklist templocklistnode = headnode.next;
+            while(!templocklistnode.istail)
+            {
+                //判断是否上锁
+                if(templocklistnode.isalocked)
+                {
+                    //上了s锁
+                    if(templocklistnode.locktype == 0)
+                    {
+                        slock++;
+                    }
+                    //上了x锁
+                    if(templocklistnode.locktype == 1)
+                    {
+                        xlock++;
+                    }
+                }
+                else
+                {
+                    if(xlock != 0)
+                    {
+                        return false;
+                    }
+                    //暂未考虑退出遍历
+                    if(templocklistnode.locktype == 0)
+                    {
+                        //此时已经保证没有互斥锁
+                        templocklistnode.isalocked = true;
+                        slock++;
+                        iscanlock = true;
+                    }
+                    else
+                    {
+                        //xs锁同时为空
+                        if(slock == 0)
+                        {
+                            templocklistnode.isalocked = true;
+                            xlock++;
+                            iscanlock = true;
+                        }
+                    }
+                }
+                templocklistnode = templocklistnode.next;
+            }
+            return iscanlock;
+        }
+
+        //事务列表，初始化时假设没有分配，locktype为锁的类型，0为s锁，1为x锁。
+        public class transationlocklist{
+            LockManage.transationlocklist prev;
+            LockManage.transationlocklist next;
+            PageId key;
+            boolean isalocked = false;
+            boolean istail = false;
+            TransactionId tid;
+            int locktype = -1;
+            public transationlocklist(){
+            }
+        }
+        //获取一个头尾项链的链表，用于每个页的锁链表的初始化。
+        public transationlocklist getheadandtaillist(){
+            LockManage.transationlocklist head;
+            LockManage.transationlocklist tail;
+            head = new transationlocklist();
+            tail = new transationlocklist();
+            tail.istail = true;
+            head.prev = tail;
+            tail.next = head;
+            head.next = tail;
+            tail.prev = head;
+            return head;
+        }
+    }
+
 
     public static int getPageSize() {
       return pageSize;
@@ -82,13 +340,61 @@ public class BufferPool {
     public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
         // some code goes here
+//        System.out.println(22);
+        int locktype = -1;
+        if(lockManage.hooldslock(tid, pid))
+        {
+            locktype = lockManage.locktype(tid,pid);
+        }
         if(!(lruCache.map.containsKey(pid)))
         {
             //现在用LRUcache代表我们的缓冲池
             //因为在LRUcache中移除的页面在pages没有移除会导致内存一直变大
+            //根据事务的处理需求加锁
+            if (perm == Permissions.READ_ONLY)
+            {
+                //返回-1说明没有锁
+                if(locktype==-1)
+                {
+                    lockManage.lock(tid,pid,0);
+                }
+            }
+            else
+            {
+                if(locktype==0)
+                {
+                    lockManage.uplock(tid,pid);
+                }
+                else if(locktype==-1)
+                {
+                    lockManage.lock(tid,pid,1);
+                }
+            }
             DbFile file = Database.getCatalog().getDatabaseFile(pid.getTableId());
             Page page = file.readPage(pid);
             lruCache.put(pid,page);
+        }
+        else
+        {
+            if (perm == Permissions.READ_ONLY)
+            {
+                //返回-1说明没有锁
+                if(locktype==-1)
+                {
+                    lockManage.lock(tid,pid,0);
+                }
+            }
+            else
+            {
+                if(locktype==0)
+                {
+                    lockManage.uplock(tid,pid);
+                }
+                else if(locktype==-1)
+                {
+                    lockManage.lock(tid,pid,1);
+                }
+            }
         }
         return lruCache.map.get(pid).value;
 
@@ -106,6 +412,8 @@ public class BufferPool {
     public  void unsafeReleasePage(TransactionId tid, PageId pid) {
         // some code goes here
         // not necessary for lab1|lab2
+        lockManage.unlock(tid,pid,0,false);
+        lockManage.unlock(tid,pid,1,true);
     }
 
     /**
@@ -113,16 +421,10 @@ public class BufferPool {
      *
      * @param tid the ID of the transaction requesting the unlock
      */
-    public void transactionComplete(TransactionId tid) {
+    public void transactionComplete(TransactionId tid){
         // some code goes here
         // not necessary for lab1|lab2
-    }
-
-    /** Return true if the specified transaction has a lock on the specified page */
-    public boolean holdsLock(TransactionId tid, PageId p) {
-        // some code goes here
-        // not necessary for lab1|lab2
-        return false;
+        transactionComplete(tid,true);
     }
 
     /**
@@ -132,10 +434,60 @@ public class BufferPool {
      * @param tid the ID of the transaction requesting the unlock
      * @param commit a flag indicating whether we should commit or abort
      */
-    public void transactionComplete(TransactionId tid, boolean commit) {
+    public void transactionComplete(TransactionId tid, boolean commit)  {
         // some code goes here
         // not necessary for lab1|lab2
+        Set<Map.Entry<PageId, LRUCache.Node>> entrySet = lruCache.getEntrySet();
+        //事务提交，与事务关联的脏页刷新到磁盘
+        //要先将脏页写回磁盘，再释放锁
+        if(commit)
+        {
+            //遍历缓冲池的页表把脏页写回磁盘Set<Map.Entry<PageId, Node>>
+            for(Map.Entry<PageId, LRUCache.Node> entry:entrySet)
+            {
+                Page page = entry.getValue().value;
+                HeapFile heapFile = (HeapFile) Database.getCatalog().getDatabaseFile(page.getId().getTableId());
+                if(page.isDirty()!=null)
+                {
+                    //写回磁盘后，脏页就恢复成正常的页
+                    try {
+                        heapFile.writePage(page);
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                    page.markDirty(false,tid);
+                }
+                //把持有的锁释放
+                unsafeReleasePage(tid, entry.getKey());
+            }
+        }
+        //回滚事务，先释放锁，再更新缓冲池的数据
+        else {
+            for(Map.Entry<PageId, LRUCache.Node> entry:entrySet)
+            {
+                //把持有的锁释放
+                unsafeReleasePage(tid, entry.getKey());
+                //脏页则重新读取
+                if(entry.getValue().value.isDirty()!=null)
+                {
+                    Page page = null;
+                    DbFile file = Database.getCatalog().getDatabaseFile(entry.getKey().getTableId());
+                    page = file.readPage(entry.getKey());
+
+                    //在原位替换
+                    lruCache.map.get(entry.getKey()).value = page;
+                }
+            }
+        }
     }
+
+    /** Return true if the specified transaction has a lock on the specified page */
+    public boolean holdsLock(TransactionId tid, PageId p) {
+        // some code goes here
+        // not necessary for lab1|lab2.
+        return  lockManage.hooldslock(tid,p);
+    }
+
 
     /**
      * Add a tuple to the specified table on behalf of transaction tid.  Will
@@ -191,7 +543,11 @@ public class BufferPool {
         for (Page page : updatePages) {
             page.markDirty(true, tid);
             // update bufferPool
-            lruCache.put(page.getId(), page);
+            try {
+                lruCache.put(page.getId(), page);
+            } catch (DbException e) {
+                throw new RuntimeException(e);
+            }
         }
     }
 
@@ -273,7 +629,8 @@ public class BufferPool {
         public synchronized int getSize(){
             return this.size;
         }
-        public void put(PageId pid,Page value)
+        //放入一个键值对
+        public void put(PageId pid,Page value) throws DbException
         {
             if(map.containsKey(pid))
             {
@@ -309,10 +666,17 @@ public class BufferPool {
                         map.remove(notdirtynode.key);
                         notdirtynode.prev.next = notdirtynode.next;
                         notdirtynode.next.prev = notdirtynode.prev;
+                        //删除之前要释放锁，但是这里的事务可能不对
+                        Database.getBufferPool().unsafeReleasePage(new TransactionId(),notdirtynode.key);
+                    }
+                    else
+                    {
+                        throw new DbException("没有非脏页");
                     }
                 }
             }
         }
+        //将对应的项下移
         public void down(PageId pid)
         {
             map.get(pid).prev.next = map.get(pid).next;
@@ -322,6 +686,7 @@ public class BufferPool {
             head.next = map.get(pid);
             map.get(pid).prev = head;
         }
+        //取出一个对
         public Page get(PageId pid)
         {
             if(map.containsKey(pid))

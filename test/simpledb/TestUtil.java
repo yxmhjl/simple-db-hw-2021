@@ -319,8 +319,8 @@ public class TestUtil {
         final Object elock;
 
         /**
-         * @param tid the transaction on whose behalf we want to acquire the lock
-         * @param pid the page over which we want to acquire the lock
+         * @param tid  the transaction on whose behalf we want to acquire the lock
+         * @param pid  the page over which we want to acquire the lock
          * @param perm the desired lock permissions
          */
         public LockGrabber(TransactionId tid, PageId pid, Permissions perm) {
@@ -336,12 +336,12 @@ public class TestUtil {
         public void run() {
             try {
                 Database.getBufferPool().getPage(tid, pid, perm);
-                synchronized(alock) {
+                synchronized (alock) {
                     acquired = true;
                 }
             } catch (Exception e) {
                 e.printStackTrace();
-                synchronized(elock) {
+                synchronized (elock) {
                     error = e;
                 }
 
@@ -353,17 +353,17 @@ public class TestUtil {
          * @return true if we successfully acquired the specified lock
          */
         public boolean acquired() {
-            synchronized(alock) {
+            synchronized (alock) {
                 return acquired;
             }
         }
 
         /**
          * @return an Exception instance if one occured during lock acquisition;
-         *   null otherwise
+         * null otherwise
          */
         public Exception getError() {
-            synchronized(elock) {
+            synchronized (elock) {
                 return error;
             }
         }

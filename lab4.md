@@ -198,6 +198,10 @@ we recommend acquiring locks in `getPage()`. Depending on your
 implementation, it is possible that you may not have to acquire a lock
 anywhere else. It is up to you to verify this!
 
+你需要实现严格的两阶段锁定。这意味着事务在访问任何对象之前应该获取适当类型的锁，并且在事务提交之前不应该释放任何锁。
+
+幸运的是，SimpleDB 的设计使得在 BufferPool.getPage() 方法中获取页面上的锁是可能的，这发生在你读取或修改页面之前。因此，我们建议在 getPage() 方法中获取锁。根据你的实现，可能你不需要在其他地方获取锁。你需要自行验证这一点！
+
 You will need to acquire a *shared* lock on any page (or tuple)
 before you read it, and you will need to acquire an *exclusive*
 lock on any page (or tuple) before you write it. You will notice that
@@ -219,11 +223,15 @@ check that your implementation of
 any of the pages they access (you should have done this when you
 implemented this code in lab 2, but we did not test for this case.)
 
+你需要在读取任何页面（或元组）之前获取一个共享锁，并在写入任何页面（或元组）之前获取一个排他锁。你会注意到我们已经在 BufferPool 中传递了 Permissions 对象；这些对象表示调用者希望在被访问的对象上获取的锁类型（我们已经为你提供了 Permissions 类的代码）。
+
+请注意，你的 HeapFile.insertTuple() 和 HeapFile.deleteTuple() 的实现，以及 HeapFile.iterator() 返回的迭代器，都应该使用 BufferPool.getPage() 来访问页面。请仔细检查这些不同的 getPage() 调用是否传递了正确的权限对象（例如，Permissions.READ_WRITE 或 Permissions.READ_ONLY）。你可能还希望检查你的 BufferPool.insertTuple() 和 BufferPool.deleteTuple() 实现是否在访问的页面上调用了 markDirty()（你应该在实验室2中实现这个功能时已经完成了这一点，但我们没有测试这种情况）。
+
 After you have acquired locks, you will need to think about when to
 release them as well. It is clear that you should release all locks
 associated with a transaction after it has committed or aborted to ensure strict 2PL.
 However, it is
-possible for there to be other scenarios in which releasing a lock before
+possible在获取锁之后，你还需要考虑何时释放它们。很明显，你应该在事务提交或中止后释放与该事务相关的所有锁，以确保严格的两阶段锁定（2PL）。然而，也可能存在其他情况下，在事务结束前释放锁是有用的。例如，你可以在扫描页面以查找空槽后释放共享锁（如下所述）。 for there to be other scenarios in which releasing a lock before
 a transaction ends might be useful. For instance, you may release a shared lock
 on a page after scanning it to find empty slots (as described below).
 
@@ -259,6 +267,15 @@ locks in the following situations:
    Although this apparently contradicts the rules of two-phase locking, it is ok because
    *t* did not use any data from the page, such that a concurrent transaction *t'* which updated
    *p* cannot possibly effect the answer or outcome of *t*.
+* 确保在整个 SimpleDB 中正确地获取和释放锁。以下是一些（但不一定全部）需要验证的动作：
+
+   - 在 `SeqScan` 期间从页面读取元组（如果你在 `BufferPool.getPage()` 中实现了锁机制，只要 `HeapFile.iterator()` 使用 `BufferPool.getPage()`，这应该能正常工作）。
+   - 通过 `BufferPool` 和 `HeapFile` 方法插入和删除元组（如果你在 `BufferPool.getPage()` 中实现了锁机制，只要 `HeapFile.insertTuple()` 和 `HeapFile.deleteTuple()` 使用 `BufferPool.getPage()`，这应该能正常工作）。
+
+   你还需要特别注意在以下情况中获取和释放锁：
+
+   - 向 `HeapFile` 添加新页面。你何时将页面物理写入磁盘？是否存在与其他事务（在其他线程上）的竞态条件，这些条件可能需要在 `HeapFile` 层面特别关注，而不仅仅是页面级别的锁定？
+   - 查找可以插入元组的空槽。大多数实现会扫描页面以查找空槽，并且需要一个 `READ_ONLY` 锁来执行此操作。然而，如果事务 *t* 在页面 *p* 上找不到空槽，*t* 可以立即释放 *p* 上的锁。尽管这看似违反了两阶段锁定的规则，但实际上是可以的，因为 *t* 没有使用页面上的任何数据，因此并发事务 *t'* 更新 *p* 不可能影响 *t* 的结果或输出。
 
 
 At this point, your code should pass the unit tests in
@@ -279,7 +296,9 @@ for eviction, you will have to find a way to evict an alternative
 page. In the case where all pages in the buffer pool are dirty, you
 should throw a <tt>DbException</tt>. If your eviction policy evicts a clean page, be
 mindful of any locks transactions may already hold to the evicted page and handle them 
-appropriately in your implementation.
+appropriately in your implementati事务的修改只有在其提交后才会写入磁盘。这意味着我们可以通过丢弃脏页并重新从磁盘读取它们来中止事务。因此，我们不能驱逐脏页。这种策略称为“不剥夺”（NO STEAL）。
+
+你需要修改 BufferPool 类中的 evictPage 方法。具体来说，它决不能驱逐脏页。如果你的驱逐策略倾向于驱逐脏页，你将不得不找到一种方法来驱逐其他页面。在缓冲池中的所有页面都是脏页的情况下，你应该抛出一个 DbException。如果你的驱逐策略驱逐了一个干净的页面，请注意事务可能已经持有的对该页面的锁，并在实现中适当地处理这些锁。on.
 
 ***
 
@@ -306,7 +325,9 @@ internal error or deadlock has occurred.  The test cases we have provided
 you with create the appropriate `TransactionId` objects, pass
 them to your operators in the appropriate way, and invoke
 `transactionComplete` when a query is finished.  We have also
-implemented `TransactionId`.
+implemented `TransactionId在 SimpleDB 中，每个查询开始时都会创建一个 TransactionId 对象。这个对象会被传递给参与查询的所有操作符。当查询完成后，会调用 BufferPool 类中的 transactionComplete 方法。
+
+调用这个方法会提交或中止事务，具体由参数 commit 指定。在执行过程中，任何操作符都可能抛出 TransactionAbortedException 异常，这表示发生了内部错误或死锁。我们提供的测试用例会创建适当的 TransactionId 对象，以适当的方式将它们传递给你的操作符，并在查询完成时调用 transactionComplete 方法。我们还实现了 TransactionId 类。`.
 
 
 ***
@@ -322,7 +343,13 @@ always commit and so can simply be implemented by calling  `transactionComplete(
 When you commit, you should flush dirty pages
 associated to the transaction to disk. When you abort, you should revert
 any changes made by the transaction by restoring the page to its on-disk
-state.
+state.在 `BufferPool` 中实现 `transactionComplete()` 方法。请注意，有两个版本的 `transactionComplete` 方法，一个接受额外的布尔参数 `commit`，另一个不接受。不接受额外参数的版本应该始终提交事务，因此可以简单地通过调用 `transactionComplete(tid, true)` 来实现。
+
+当你提交事务时，应该将与事务关联的脏页刷新到磁盘。当你中止事务时，应该通过将页面恢复到其磁盘状态来撤销事务所做的任何更改。
+
+无论事务是提交还是中止，你还应该释放 `BufferPool` 保留的与事务相关的所有状态，包括释放事务持有的任何锁。
+
+在这个阶段，你的代码应该通过 `TransactionTest` 单元测试和 `AbortEvictionTest` 系统测试。你可能会发现 `TransactionTest` 系统测试具有启发性，但它可能会在你完成下一个练习之前失败。
 
 Whether the transaction commits or aborts, you should also release any state the
 `BufferPool` keeps regarding
