@@ -182,10 +182,10 @@ public class DeadlockTest extends TestUtil.CreateHeapFile {
 
     LockGrabber lg1Read = startGrabber(tid1, p0, Permissions.READ_ONLY);
     LockGrabber lg2Read = startGrabber(tid2, p0, Permissions.READ_ONLY);
-
+    System.out.println(1111);
     // allow read locks to acquire
     Thread.sleep(POLL_INTERVAL);
-
+    System.out.println(22222);
     LockGrabber lg1Write = startGrabber(tid1, p0, Permissions.READ_WRITE);
     LockGrabber lg2Write = startGrabber(tid2, p0, Permissions.READ_WRITE);
 

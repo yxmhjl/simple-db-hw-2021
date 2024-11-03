@@ -90,7 +90,10 @@ public class BufferPool {
                 tempnode.locktype = locktype;
                 tempnode.tid = tid;
                 transationnode.add(tempnode);
-                index.put(tid, transationnode.size());
+                if(index.get(tid)==null)
+                {
+                    index.put(tid, transationnode.size());
+                }
                 //判断要加的边
                 for (int i = 0; i < transationnode.size(); i++) {
                     node node1 = transationnode.get(i);
@@ -148,7 +151,7 @@ public class BufferPool {
             tailnode.prev.next = templocklistnode;
             templocklistnode.prev = tailnode.prev;
             tailnode.prev = templocklistnode;
-            //这一行会导致Transactiontest不过
+            //
             waitforGraph.addtransation(tid,pid,lock_type);
             //是否可以加锁，如果可以则按照链表次序加锁，加锁成功返回true，加锁失败返回f
             if(!addlock(locks.get(pid)))
@@ -220,6 +223,7 @@ public class BufferPool {
         //升级锁，当只有当前事务持有该数据项的s锁的时候能够升级
         public void uplock(TransactionId tid,PageId pid)
         {
+            waitforGraph.addtransation(tid,pid,1);
             int slock = 0;
             int xlock = 0;
             transationlocklist templocklistnode = locks.get(pid).next;
@@ -250,6 +254,9 @@ public class BufferPool {
                     {
                         templocklistnode.locktype = 1;
                     }
+                    else {
+                        // 升级条件不满足
+                    }
                 }
                 templocklistnode = templocklistnode.next;
             }
@@ -270,7 +277,7 @@ public class BufferPool {
                 }
                 System.out.println();
             }
-            System.out.println("----------------------------");
+            System.out.println("-----------------------------");
         }
         // 检测环
         public boolean isCyclic() {
@@ -481,6 +488,7 @@ public class BufferPool {
                 }
                 else if(locktype==-1)
                 {
+                    System.out.println("升级所");
                     lockManage.lock(tid,pid,1);
                 }
             }
@@ -506,6 +514,7 @@ public class BufferPool {
                 }
                 else if(locktype==-1)
                 {
+                    System.out.println("升级所1");
                     lockManage.lock(tid,pid,1);
                 }
             }
