@@ -61,6 +61,7 @@ public class BufferPool {
             locks = new ConcurrentHashMap<>();
             waitforGraph = new WaitforGraph();
         }
+
         //内部类等待依赖图
         public  class WaitforGraph{
             //存放事务的列表
@@ -120,6 +121,7 @@ public class BufferPool {
                 int locktype;
             }
         }
+
         //加锁,
         public synchronized boolean lock(TransactionId tid,PageId pid,int lock_type)
         {
@@ -138,20 +140,12 @@ public class BufferPool {
             //首先找到链表末尾
             transationlocklist tailnode;
             transationlocklist nownode = locks.get(pid);
-            while(true)
-            {
-                if(nownode.istail)
-                {
-                    tailnode = nownode;
-                    break;
-                }
-                nownode = nownode.next;
-            }
+            tailnode=gettailnode(nownode);
             templocklistnode.next = tailnode;
             tailnode.prev.next = templocklistnode;
             templocklistnode.prev = tailnode.prev;
             tailnode.prev = templocklistnode;
-            //
+            //将当前的锁指令加入等待图看是否会有死锁，有的话则回滚
             waitforGraph.addtransation(tid,pid,lock_type);
             //是否可以加锁，如果可以则按照链表次序加锁，加锁成功返回true，加锁失败返回f
             if(!addlock(locks.get(pid)))
@@ -167,6 +161,21 @@ public class BufferPool {
                 return  true;
             }
             return false;
+        }
+
+        //获取尾指针
+        public transationlocklist gettailnode(transationlocklist nownode)
+        {
+            transationlocklist tailnode;
+            while(true)
+            {
+                if(nownode.istail)
+                {
+                    tailnode = nownode;
+                    return tailnode;
+                }
+                nownode = nownode.next;
+            }
         }
 
         //解锁，同时考虑解锁后发生的可能的加锁
@@ -208,6 +217,7 @@ public class BufferPool {
                 }
             }
         }
+
         //事务终止
         public void abort(TransactionId tid,int lock_type)
         {
@@ -220,10 +230,12 @@ public class BufferPool {
                 unlock(tid, pid, 1, true);
             }
         }
+
         //升级锁，当只有当前事务持有该数据项的s锁的时候能够升级
         public void uplock(TransactionId tid,PageId pid)
         {
             waitforGraph.addtransation(tid,pid,1);
+
             int slock = 0;
             int xlock = 0;
             transationlocklist templocklistnode = locks.get(pid).next;
@@ -261,6 +273,7 @@ public class BufferPool {
                 templocklistnode = templocklistnode.next;
             }
         }
+
         //判断是否有死锁lockManage.isDeadLock();
         public void isDeadLock(TransactionId tid){
             if(isCyclic())
@@ -271,14 +284,8 @@ public class BufferPool {
                     throw new RuntimeException(e);
                 }
             }
-            for (int i = 0; i < MAX_SIZE; i++) {
-                for (int j = 0; j < MAX_SIZE; j++) {
-                    System.out.print(waitforGraph.waitRelation[i][j]);
-                }
-                System.out.println();
-            }
-            System.out.println("-----------------------------");
         }
+
         // 检测环
         public boolean isCyclic() {
             boolean[] visited = new boolean[MAX_SIZE];
@@ -291,6 +298,7 @@ public class BufferPool {
             }
             return false;
         }
+
         // 深度优先搜索
         private boolean isCyclicUtil(int i, boolean[] visited, boolean[] recStack) {
             if (recStack[i]) {
@@ -313,6 +321,7 @@ public class BufferPool {
             recStack[i] = false;
             return false;
         }
+
         //看一个事务在一个数据项上是否有锁
         public boolean hooldslock(TransactionId tid,PageId pid)
         {
@@ -488,7 +497,6 @@ public class BufferPool {
                 }
                 else if(locktype==-1)
                 {
-                    System.out.println("升级所");
                     lockManage.lock(tid,pid,1);
                 }
             }
@@ -514,7 +522,6 @@ public class BufferPool {
                 }
                 else if(locktype==-1)
                 {
-                    System.out.println("升级所1");
                     lockManage.lock(tid,pid,1);
                 }
             }
