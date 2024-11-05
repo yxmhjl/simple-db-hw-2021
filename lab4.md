@@ -386,6 +386,12 @@ wait-for graph. This is sometimes preferred for performance reasons, but transac
 that could have succeeded can be aborted by mistake under this scheme. Examples include
 the WAIT-DIE and WOUND-WAIT schemes.
 
+在 SimpleDB 中，事务可能会死锁（如果你不明白为什么，请参阅 Ramakrishnan 和 Gehrke 关于死锁的章节）。你需要检测这种情况并抛出 TransactionAbortedException。
+
+有许多方法可以检测死锁。一个简单的例子是实现一个超时策略，如果事务在给定时间内没有完成，则中止该事务。对于一个真正的解决方案，你可以实现依赖图数据结构中的循环检测，如课堂上所示。在这种方案中，你可以在周期性地或尝试授予新锁时检查依赖图中的循环，并在存在循环时中止某个事务。在检测到死锁后，你需要决定如何改善情况。假设你在事务 t 等待锁时检测到了死锁。如果你心狠手辣，可以中止 t 正在等待的所有事务；这可能导致大量工作被撤销，但可以保证 t 能够继续进行。或者，你可以决定中止 t 以让其他事务有机会继续进行。这意味着最终用户需要重试事务 t。
+
+另一种方法是使用全局事务排序来避免构建等待图。这有时出于性能原因而被首选，但在此方案下，可能会错误地中止本可以成功的事务。例如，包括 WAIT-DIE 和 WOUND-WAIT 方案
+
 ***
 
 **Exercise 5.**
@@ -434,6 +440,21 @@ transaction, the effects of any running transaction will not be visible
 after the system restarts (or the transaction aborts.) You may wish to
 verify this by running some transactions and explicitly killing the
 database server.
+
+为了在 src/simpledb/BufferPool.java 中实现死锁检测或预防，你有很多设计决策需要考虑，但不需要做非常复杂的实现。我们期望你能够做得比每个事务的简单超时更好。一个好的起点是在每次锁请求之前实现依赖图（wait-for graph）中的循环检测，这样的实现可以获得满分。
+请在实验报告中描述你的选择，并列出你的选择相对于其他方案的优缺点。
+
+你应该确保在发生死锁时，你的代码能够正确地中止事务，通过抛出 TransactionAbortedException 异常。
+这个异常将被执行事务的代码（例如 TransactionTest.java）捕获，该代码应该调用 transactionComplete() 来清理事务。
+你不需要自动重启因死锁而失败的事务——你可以假设更高层的代码会处理这个问题。
+
+我们在 test/simpledb/DeadlockTest.java 中提供了一些（不太像单元测试的）测试。这些测试实际上相当复杂，因此可能需要几秒钟才能运行完毕（取决于你的策略）。如果它们似乎无限期地挂起，那么你可能有未解决的死锁。这些测试构造了简单的死锁情况，你的代码应该能够从中逃脱。
+
+请注意，在 DeadLockTest.java 的顶部有两个定时参数；这些参数决定了测试检查锁是否已获取的频率以及中止事务重新启动之前的等待时间。如果你使用基于超时的检测方法，可以通过调整这些参数来观察不同的性能特性。测试将输出与已解决死锁对应的 TransactionAbortedExceptions 到控制台。
+
+现在你的代码应该能够通过 TransactionTest 系统测试（根据你的实现，这可能需要相当长的时间才能运行完毕）。
+
+此时，你应该拥有一个可恢复的数据库，即如果数据库系统崩溃（在 transactionComplete() 之外的某个点）或用户显式中止事务，任何正在运行的事务的效果在系统重启后（或事务中止后）将不可见。你可能希望通过运行一些事务并显式杀死数据库服务器来验证这一点。
 
 
 ***

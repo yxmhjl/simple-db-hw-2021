@@ -188,7 +188,35 @@ public class BTreeFile implements DbFile {
                                        Field f)
 					throws DbException, TransactionAbortedException {
 		// some code goes here
-        return null;
+		IntField field1 = null;
+		BTreeEntry bTreeEntry = null;
+		IntField field = null;
+		//f为空的情况要返回最左叶子结点
+		if(f!=null)
+		{
+			field1 = (IntField) f;
+		}
+		switch (pid.pgcateg())
+		{
+			case BTreePageId.ROOT_PTR:
+			//不必找到叶子结点对应的值为f的具体的元组，只需要找到f在的页即可
+			case BTreePageId.LEAF:
+				BTreeLeafPage leaf = (BTreeLeafPage) getPage(tid, dirtypages, pid, perm);
+				return leaf;
+			case BTreePageId.INTERNAL:
+				BTreeInternalPage bTreeInternalPage = (BTreeInternalPage) getPage(tid, dirtypages, pid, perm);
+				Iterator it = bTreeInternalPage.iterator();
+				while (it.hasNext()) {
+					bTreeEntry = (BTreeEntry) it.next();
+					field = (IntField) bTreeEntry.getKey();
+					//文件为空，或者小于等于当前值时，要查找的内容在左树上
+					if(f == null || field1.getValue() <= field.getValue()) {
+						return findLeafPage(tid, dirtypages, bTreeEntry.getLeftChild(), perm, field);
+					}
+				}
+		}
+		//如果值大于当前结点的最后一个值则在当前条目的右树中找
+		return findLeafPage(tid, dirtypages, bTreeEntry.getRightChild(), perm, field);
 	}
 	
 	/**

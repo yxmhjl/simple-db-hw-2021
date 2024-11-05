@@ -576,7 +576,7 @@ public class BufferPool {
             for(Map.Entry<PageId, LRUCache.Node> entry:entrySet)
             {
                 Page page = entry.getValue().value;
-                HeapFile heapFile = (HeapFile) Database.getCatalog().getDatabaseFile(page.getId().getTableId());
+                DbFile heapFile = Database.getCatalog().getDatabaseFile(page.getId().getTableId());
                 if(page.isDirty()!=null)
                 {
                     //写回磁盘后，脏页就恢复成正常的页
