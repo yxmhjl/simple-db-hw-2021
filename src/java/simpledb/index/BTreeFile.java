@@ -2,6 +2,7 @@ package simpledb.index;
 
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 import simpledb.common.Database;
 import simpledb.common.Permissions;
@@ -260,15 +261,61 @@ public class BTreeFile implements DbFile {
 	public BTreeLeafPage splitLeafPage(TransactionId tid, Map<PageId, Page> dirtypages, BTreeLeafPage page, Field field)
 			throws DbException, IOException, TransactionAbortedException {
 		// some code goes here
-        //
-        // Split the leaf page by adding a new page on the right of the existing
-		// page and moving half of the tuples to the new page.  Copy the middle key up
-		// into the parent page, and recursively split the parent as needed to accommodate
-		// the new entry.  getParentWithEmtpySlots() will be useful here.  Don't forget to update
-		// the sibling pointers of all the affected leaf pages.  Return the page into which a 
-		// tuple with the given key field should be inserted.
-        return null;
-		
+		//获取最大能够放的元组数，也就是槽数
+		int n = page.getNumTuples();
+		int index = n/2;
+		//新建一个叶子结点。
+		BTreeLeafPage newbTreeLeafPage = (BTreeLeafPage) getEmptyPage(tid,dirtypages,BTreePageId.LEAF);
+		BTreeLeafPageIterator it = new BTreeLeafPageIterator(page);
+		//为插入的值找到合适的下标
+		int fieldindex = 0;
+		int i = 1;
+		boolean flag = false;
+		int pagenumtuple = 0;
+		while (it.hasNext()) {
+			pagenumtuple++;
+			Tuple tuple = it.next();
+			//将后半部分元组从page移动到newpage
+			if (pagenumtuple > n / 2) {
+				page.deleteTuple(tuple);
+				newbTreeLeafPage.insertTuple(tuple);
+			}
+			//确定要插入的内容的下标的，没必要
+			if (tuple.getField(page.keyField).compare(Op.GREATER_THAN, field) && !flag) {
+				flag = true;
+				fieldindex = i;
+				i++;
+			}
+			i++;
+		}
+		if(!flag) {
+			fieldindex = i;
+		}
+
+		//将新页面和老页面连接起来，更新左右指针
+		BTreePageId bid = page.getRightSiblingId();
+		page.setRightSiblingId(newbTreeLeafPage.getId());
+		newbTreeLeafPage.setLeftSiblingId(page.getId());
+		newbTreeLeafPage.setRightSiblingId(bid);
+
+		//更新父节点的条目
+		BTreeInternalPage parentinternal = getParentWithEmptySlots(tid,dirtypages,page.getParentId(),field);
+		//叶子结点交给父节点的Field是新页的第一项的Field
+		BTreeEntry e = new BTreeEntry(newbTreeLeafPage.getTuple(0).getField(page.keyField),page.getId(),newbTreeLeafPage.getId());
+		parentinternal.insertEntry(e);
+		newbTreeLeafPage.setParentId(parentinternal.getId());
+
+		//将脏页加入脏页列表
+		dirtypages.put(parentinternal.getId(),parentinternal);
+		dirtypages.put(page.getId(),page);
+		dirtypages.put(newbTreeLeafPage.getId(),newbTreeLeafPage);
+
+		//判断返回哪一个页面
+		if(fieldindex <= index)
+		{
+			return page;
+		}
+		return newbTreeLeafPage;
 	}
 	
 	/**
@@ -297,15 +344,62 @@ public class BTreeFile implements DbFile {
 			BTreeInternalPage page, Field field) 
 					throws DbException, IOException, TransactionAbortedException {
 		// some code goes here
-        //
-        // Split the internal page by adding a new page on the right of the existing
-		// page and moving half of the entries to the new page.  Push the middle key up
-		// into the parent page, and recursively split the parent as needed to accommodate
-		// the new entry.  getParentWithEmtpySlots() will be useful here.  Don't forget to update
-		// the parent pointers of all the children moving to the new page.  updateParentPointers()
-		// will be useful here.  Return the page into which an entry with the given key field
-		// should be inserted.
-		return null;
+		int n = page.getNumEntries();
+		int index = n / 2;
+		//定于一个新的内部节点
+		BTreeInternalPage newbtreeinternalpage = (BTreeInternalPage) getEmptyPage(tid, dirtypages, BTreePageId.INTERNAL);
+
+		//设置新页面的父亲和旧页面是兄弟
+		newbtreeinternalpage.setParentId(page.getId());
+		updateParentPointers(tid, dirtypages, newbtreeinternalpage);
+
+		int fieldindex = 0;
+		boolean flag = false;
+		int i = 1;
+		int pagenumentry = 0;
+		BTreeEntry uppush = null;
+		BTreeInternalPageIterator it = new BTreeInternalPageIterator(page);
+		while (it.hasNext()) {
+			pagenumentry++;
+			BTreeEntry entry = it.next();
+			//由于内部结点的中间值提到上层结点需要在本层删除
+			if (pagenumentry > (n / 2 + 1)) {
+				page.deleteKeyAndRightChild(entry);
+				newbtreeinternalpage.insertEntry(entry);
+			}
+			//这个结点是需要提到上一层的
+			if (pagenumentry == n / 2 + 1) {
+				page.deleteKeyAndRightChild(entry);
+				uppush = entry;
+			}
+			//这一部分是确定要插入的部分的下标的，可以去掉，比较臃肿
+			if (entry.getKey().compare(Op.GREATER_THAN, field) && !flag) {
+				flag = true;
+				fieldindex = i;
+				i++;
+			}
+			i++;
+		}
+		if (!flag) {
+			fieldindex = i;
+		}
+
+		//更新父节点的条目
+		BTreeInternalPage parentinternal = getParentWithEmptySlots(tid, dirtypages, page.getParentId(), field);
+		uppush.setLeftChild(page.getId());
+		uppush.setRightChild(newbtreeinternalpage.getId());
+		parentinternal.insertEntry(uppush);
+
+		//将脏页加入脏页列表
+		dirtypages.put(parentinternal.getId(), parentinternal);
+		dirtypages.put(page.getId(), page);
+		dirtypages.put(newbtreeinternalpage.getId(), newbtreeinternalpage);
+
+		//判断返回哪一个页面
+		if (fieldindex <= index) {
+			return page;
+		}
+		return newbtreeinternalpage;
 	}
 	
 	/**
