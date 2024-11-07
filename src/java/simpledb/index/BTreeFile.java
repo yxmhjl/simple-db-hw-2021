@@ -688,6 +688,41 @@ public class BTreeFile implements DbFile {
 			BTreeInternalPage parent, BTreeEntry entry, boolean isRightSibling) throws DbException {
 		// some code goes here
         //
+		int needshiftnumtuple = (page.getNumTuples() + sibling.getNumTuples())/2-page.getNumTuples();
+
+		//获取兄弟的元组,复制到page
+		Tuple tuple = null;
+		int i=0;
+		if(isRightSibling)
+		{
+			//右兄弟是第一个元组
+			for (i = 0; i < needshiftnumtuple; i++) {
+				tuple = sibling.getTuple(i);
+				sibling.deleteTuple(tuple);
+				page.insertTuple(tuple);
+			}
+		}
+		else
+		{
+			//左兄弟则是它的最后一个元组
+			int num = sibling.getNumTuples()-1;
+			for (i = 0; i < needshiftnumtuple; i++) {
+				tuple = sibling.getTuple(num-i);
+				sibling.deleteTuple(tuple);
+				page.insertTuple(tuple);
+			}
+		}
+
+		//更新父节点的条目
+		if(isRightSibling)
+		{
+			entry.setKey(sibling.getTuple(i).getField(sibling.keyField));
+		}
+		else
+		{
+			entry.setKey(page.getTuple(0).getField(page.keyField));
+		}
+		parent.updateEntry(entry);
         // Move some of the tuples from the sibling to the page so
 		// that the tuples are evenly distributed. Be sure to update
 		// the corresponding parent entry.
@@ -747,7 +782,7 @@ public class BTreeFile implements DbFile {
 	
 	/**
 	 * Steal entries from the left sibling and copy them to the given page so that both pages are at least
-	 * half full. Keys can be thought of as rotating through the parent entry, so the original key in the 
+	 * half full. Keys can be thought of as rotating through the parent entry, so the original key in the
 	 * parent is "pulled down" to the right-hand page, and the last key in the left-hand page is "pushed up"
 	 * to the parent.  Update parent pointers as needed.
 	 * 
@@ -766,7 +801,54 @@ public class BTreeFile implements DbFile {
 			BTreeInternalPage page, BTreeInternalPage leftSibling, BTreeInternalPage parent,
 			BTreeEntry parentEntry) throws DbException, TransactionAbortedException {
 		// some code goes here
-        // Move some of the entries from the left sibling to the page so
+		int numneedshift = Math.abs((leftSibling.getNumEntries() + page.getNumEntries())/2-page.getNumEntries());
+
+		//存储要移动的条目和对应的父条目
+		ArrayList<BTreeEntry> arry = new ArrayList<>();
+		int temp = numneedshift;
+		BTreeInternalPageReverseIterator nextit = new BTreeInternalPageReverseIterator(leftSibling);
+		while(nextit.hasNext())
+		{
+			BTreeEntry nextentry = nextit.next();
+			if(temp>0)
+			{
+				arry.add(nextentry);
+				temp--;
+				leftSibling.deleteKeyAndRightChild(nextentry);
+			}
+			else
+			{
+				break;
+			}
+		}
+
+		//更新下来的entry的左右孩子0
+		BTreeEntry entry1 = arry.get(0);
+
+		//取出来page的第一个
+		BTreeInternalPageIterator it1 = new BTreeInternalPageIterator(page);
+		BTreeEntry entry2 = it1.next();
+		BTreeEntry entry3 = new BTreeEntry(parentEntry.getKey(),entry1.getRightChild(),entry2.getLeftChild());
+		page.insertEntry(entry3);
+
+		//将取出来的条目放到该page中
+		for (int i = 0; i < numneedshift-1; i++) {
+			page.insertEntry(arry.get(i));
+		}
+
+		//用Field最小的值代替父entry
+		parentEntry.setKey(arry.get(arry.size()-1).getKey());
+		parent.updateEntry(parentEntry);
+
+		//更新脏页了
+		dirtypages.put(leftSibling.getId(), leftSibling);
+		dirtypages.put(page.getId(), page);
+		dirtypages.put(parent.getId(), parent);
+
+		//更新page的子节点的父节点
+		updateParentPointers(tid,dirtypages,page);
+
+		// Move some of the entries from the right sibling to the page so
 		// that the entries are evenly distributed. Be sure to update
 		// the corresponding parent entry. Be sure to update the parent
 		// pointers of all children in the entries that were moved.
@@ -793,6 +875,56 @@ public class BTreeFile implements DbFile {
 			BTreeInternalPage page, BTreeInternalPage rightSibling, BTreeInternalPage parent,
 			BTreeEntry parentEntry) throws DbException, TransactionAbortedException {
 		// some code goes here
+		int numneedshift = Math.abs((rightSibling.getNumEntries() + page.getNumEntries())/2-page.getNumEntries());
+
+		//存储要移动的条目和对应的父条目
+		ArrayList<BTreeEntry> arry = new ArrayList<>();
+		int temp = numneedshift;
+		BTreeInternalPageIterator nextit = new BTreeInternalPageIterator(rightSibling);
+		while(nextit.hasNext())
+		{
+			BTreeEntry nextentry = nextit.next();
+			if(temp>0)
+			{
+				arry.add(nextentry);
+				temp--;
+				rightSibling.deleteKeyAndRightChild(nextentry);
+			}
+			else
+			{
+				break;
+			}
+		}
+
+
+		//更新下来的entry的左右孩子0
+		BTreeEntry entry2 = arry.get(0);
+
+		//取出来page的第一个
+		BTreeInternalPageReverseIterator it1 = new BTreeInternalPageReverseIterator(page);
+		BTreeEntry entry1 = it1.next();
+
+		BTreeEntry entry3 = new BTreeEntry(parentEntry.getKey(),entry1.getRightChild(),entry2.getLeftChild());
+		page.insertEntry(entry3);
+
+		//将取出来的条目放到该page中
+		for (int i = 0; i < numneedshift-1; i++) {
+			page.insertEntry(arry.get(i));
+		}
+
+		//用Field最小的值代替父entry
+		parentEntry.setKey(arry.get(arry.size()-1).getKey());
+		parent.updateEntry(parentEntry);
+
+
+		//更新脏页了
+		dirtypages.put(rightSibling.getId(), rightSibling);
+		dirtypages.put(page.getId(), page);
+		dirtypages.put(parent.getId(), parent);
+
+		//更新page的子节点的父节点
+		updateParentPointers(tid,dirtypages,page);
+
         // Move some of the entries from the right sibling to the page so
 		// that the entries are evenly distributed. Be sure to update
 		// the corresponding parent entry. Be sure to update the parent
