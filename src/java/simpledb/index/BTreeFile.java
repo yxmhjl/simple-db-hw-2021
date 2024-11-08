@@ -954,11 +954,37 @@ public class BTreeFile implements DbFile {
 					throws DbException, IOException, TransactionAbortedException {
 
 		// some code goes here
-        //
-		// Move all the tuples from the right page to the left page, update
-		// the sibling pointers, and make the right page available for reuse.
-		// Delete the entry in the parent corresponding to the two pages that are merging -
-		// deleteParentEntry() will be useful here
+		//先对右孩子的结点的指针进行处理
+		if(rightPage.getRightSiblingId()!= null)
+		{
+			leftPage.setRightSiblingId(rightPage.getRightSiblingId());
+			BTreeLeafPage bTreeLeafPage = (BTreeLeafPage) getPage(tid,dirtypages,rightPage.getRightSiblingId(),Permissions.READ_ONLY);
+			bTreeLeafPage.setLeftSiblingId(leftPage.getId());
+		}
+		else
+		{
+			leftPage.setRightSiblingId(rightPage.getRightSiblingId());
+		}
+
+		//将右边页的元组放在左边
+		Iterator<Tuple> iterator = rightPage.iterator();
+		while(iterator.hasNext())
+		{
+			Tuple tuple = iterator.next();
+			rightPage.deleteTuple(tuple);
+			leftPage.insertTuple(tuple);
+		}
+
+		//将该页标记为空页
+		setEmptyPage(tid,dirtypages,rightPage.getId().getPageNumber());
+
+		//删除父节点的条目
+		parent.deleteKeyAndRightChild(parentEntry);
+
+		//更新脏页
+		dirtypages.put(leftPage.getId(), leftPage);
+		dirtypages.put(parent.getId(), parent);
+		dirtypages.put(rightPage.getId(), rightPage);
 	}
 
 	/**
@@ -986,12 +1012,35 @@ public class BTreeFile implements DbFile {
 					throws DbException, IOException, TransactionAbortedException {
 		
 		// some code goes here
-        //
-        // Move all the entries from the right page to the left page, update
-		// the parent pointers of the children in the entries that were moved, 
-		// and make the right page available for reuse
-		// Delete the entry in the parent corresponding to the two pages that are merging -
-		// deleteParentEntry() will be useful here
+		Iterator<BTreeEntry> iterator = rightPage.iterator();
+		Iterator<BTreeEntry> reverseiterator = leftPage.reverseIterator();
+
+        //首先把父亲条目插入左页,但不是插入parentEntry,要新建一个
+		BTreeEntry newparententry = new BTreeEntry(parentEntry.getKey(),reverseiterator.next().getRightChild(), iterator.next().getLeftChild());
+		leftPage.insertEntry(newparententry);
+
+		//把父条目删除
+		parent.deleteKeyAndRightChild(parentEntry);
+
+		//把右页的条目复制到左页
+		Iterator<BTreeEntry> newiterator = rightPage.iterator();
+		while(newiterator.hasNext())
+		{
+			BTreeEntry entry = newiterator.next();
+			rightPage.deleteKeyAndRightChild(entry);
+			leftPage.insertEntry(entry);
+		}
+
+		//将页标记为空页
+		setEmptyPage(tid,dirtypages,rightPage.getId().getPageNumber());
+
+		//标记脏页了
+		dirtypages.put(leftPage.getId(), leftPage);
+		dirtypages.put(parent.getId(), parent);
+		dirtypages.put(rightPage.getId(), rightPage);
+
+		//更新右页带来的子节点的父节点
+		updateParentPointers(tid,dirtypages,leftPage);
 	}
 	
 	/**
