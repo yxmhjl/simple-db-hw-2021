@@ -186,38 +186,36 @@ public class BTreeFile implements DbFile {
 	 * 
 	 */
 	private BTreeLeafPage findLeafPage(TransactionId tid, Map<PageId, Page> dirtypages, BTreePageId pid, Permissions perm,
-                                       Field f)
-					throws DbException, TransactionAbortedException {
+									   Field f)
+			throws DbException, TransactionAbortedException {
 		// some code goes here
-		IntField field1 = null;
+		Field field = null;
 		BTreeEntry bTreeEntry = null;
-		IntField field = null;
+
 		//f为空的情况要返回最左叶子结点
-		if(f!=null)
-		{
-			field1 = (IntField) f;
-		}
+
 		switch (pid.pgcateg())
 		{
-			case BTreePageId.ROOT_PTR:
-			//不必找到叶子结点对应的值为f的具体的元组，只需要找到f在的页即可
+//			case BTreePageId.ROOT_PTR:
+				//不必找到叶子结点对应的值为f的具体的元组，只需要找到f在的页即可
 			case BTreePageId.LEAF:
 				BTreeLeafPage leaf = (BTreeLeafPage) getPage(tid, dirtypages, pid, perm);
 				return leaf;
-			case BTreePageId.INTERNAL:
+			default:
 				BTreeInternalPage bTreeInternalPage = (BTreeInternalPage) getPage(tid, dirtypages, pid, perm);
-				Iterator it = bTreeInternalPage.iterator();
+				Iterator<BTreeEntry> it = bTreeInternalPage.iterator();
 				while (it.hasNext()) {
 					bTreeEntry = (BTreeEntry) it.next();
-					field = (IntField) bTreeEntry.getKey();
+					field = bTreeEntry.getKey();
 					//文件为空，或者小于等于当前值时，要查找的内容在左树上
-					if(f == null || field1.getValue() <= field.getValue()) {
-						return findLeafPage(tid, dirtypages, bTreeEntry.getLeftChild(), perm, field);
+					if(f == null || f.compare(Op.LESS_THAN_OR_EQ,field)) {
+						return findLeafPage(tid, dirtypages, bTreeEntry.getLeftChild(), perm, f);
 					}
 				}
 		}
 		//如果值大于当前结点的最后一个值则在当前条目的右树中找
-		return findLeafPage(tid, dirtypages, bTreeEntry.getRightChild(), perm, field);
+		return findLeafPage(tid, dirtypages, bTreeEntry.getRightChild(), perm, f);
+
 	}
 	
 	/**
@@ -260,6 +258,7 @@ public class BTreeFile implements DbFile {
 	 */
 	public BTreeLeafPage splitLeafPage(TransactionId tid, Map<PageId, Page> dirtypages, BTreeLeafPage page, Field field)
 			throws DbException, IOException, TransactionAbortedException {
+//		System.out.println("splitLeafPage");
 		// some code goes here
 		//获取最大能够放的元组数，也就是槽数
 		int n = page.getNumTuples();
@@ -343,6 +342,7 @@ public class BTreeFile implements DbFile {
 	public BTreeInternalPage splitInternalPage(TransactionId tid, Map<PageId, Page> dirtypages,
 			BTreeInternalPage page, Field field) 
 					throws DbException, IOException, TransactionAbortedException {
+//		System.out.println("splitInternalPage");
 		// some code goes here
 		int n = page.getNumEntries();
 		int index = n / 2;
@@ -686,46 +686,62 @@ public class BTreeFile implements DbFile {
 	 */
 	public void stealFromLeafPage(BTreeLeafPage page, BTreeLeafPage sibling,
 			BTreeInternalPage parent, BTreeEntry entry, boolean isRightSibling) throws DbException {
+//		System.out.println("stealFromLeafPage");
 		// some code goes here
-        //
 		int needshiftnumtuple = (page.getNumTuples() + sibling.getNumTuples())/2-page.getNumTuples();
-
 		//获取兄弟的元组,复制到page
 		Tuple tuple = null;
 		int i=0;
+		Iterator<Tuple> iterator = null;
 		if(isRightSibling)
 		{
-			//右兄弟是第一个元组
-			for (i = 0; i < needshiftnumtuple; i++) {
-				tuple = sibling.getTuple(i);
-				sibling.deleteTuple(tuple);
-				page.insertTuple(tuple);
+			//右兄弟则从前往后
+			iterator = sibling.iterator();
+			while(iterator.hasNext()) {
+				tuple = iterator.next();
+				if(needshiftnumtuple>0)
+				{
+					sibling.deleteTuple(tuple);
+					page.insertTuple(tuple);
+				}
+				else
+				{
+					break;
+				}
+				needshiftnumtuple -= 1;
 			}
 		}
 		else
 		{
-			//左兄弟则是它的最后一个元组
-			int num = sibling.getNumTuples()-1;
-			for (i = 0; i < needshiftnumtuple; i++) {
-				tuple = sibling.getTuple(num-i);
-				sibling.deleteTuple(tuple);
-				page.insertTuple(tuple);
+			//左兄弟则从后开始
+			iterator = sibling.reverseIterator();
+			while(iterator.hasNext()) {
+				tuple = iterator.next();
+				if(needshiftnumtuple>0)
+				{
+					sibling.deleteTuple(tuple);
+					page.insertTuple(tuple);
+				}
+				else
+				{
+					break;
+				}
+				needshiftnumtuple -= 1;
 			}
+
 		}
 
-		//更新父节点的条目
+		//更新父节点的条目，是找page和兄弟靠右的结点的第一个元组的值当作条目的值
 		if(isRightSibling)
 		{
-			entry.setKey(sibling.getTuple(i).getField(sibling.keyField));
+			iterator = sibling.iterator();
+			entry.setKey(iterator.next().getField(sibling.keyField));
 		}
 		else
 		{
 			entry.setKey(page.getTuple(0).getField(page.keyField));
 		}
 		parent.updateEntry(entry);
-        // Move some of the tuples from the sibling to the page so
-		// that the tuples are evenly distributed. Be sure to update
-		// the corresponding parent entry.
 	}
 
 	/**
@@ -800,6 +816,7 @@ public class BTreeFile implements DbFile {
 	public void stealFromLeftInternalPage(TransactionId tid, Map<PageId, Page> dirtypages,
 			BTreeInternalPage page, BTreeInternalPage leftSibling, BTreeInternalPage parent,
 			BTreeEntry parentEntry) throws DbException, TransactionAbortedException {
+//		System.out.println("stealFromLeftInternalPage");
 		// some code goes here
 		int numneedshift = Math.abs((leftSibling.getNumEntries() + page.getNumEntries())/2-page.getNumEntries());
 
@@ -874,6 +891,7 @@ public class BTreeFile implements DbFile {
 	public void stealFromRightInternalPage(TransactionId tid, Map<PageId, Page> dirtypages,
 			BTreeInternalPage page, BTreeInternalPage rightSibling, BTreeInternalPage parent,
 			BTreeEntry parentEntry) throws DbException, TransactionAbortedException {
+//		System.out.println("stealFromRightInternalPage");
 		// some code goes here
 		int numneedshift = Math.abs((rightSibling.getNumEntries() + page.getNumEntries())/2-page.getNumEntries());
 
@@ -888,7 +906,7 @@ public class BTreeFile implements DbFile {
 			{
 				arry.add(nextentry);
 				temp--;
-				rightSibling.deleteKeyAndRightChild(nextentry);
+				rightSibling.deleteKeyAndLeftChild(nextentry);
 			}
 			else
 			{
@@ -930,13 +948,13 @@ public class BTreeFile implements DbFile {
 		// the corresponding parent entry. Be sure to update the parent
 		// pointers of all children in the entries that were moved.
 	}
-	
+
 	/**
-	 * Merge two leaf pages by moving all tuples from the right page to the left page. 
-	 * Delete the corresponding key and right child pointer from the parent, and recursively 
+	 * Merge two leaf pages by moving all tuples from the right page to the left page.
+	 * Delete the corresponding key and right child pointer from the parent, and recursively
 	 * handle the case when the parent gets below minimum occupancy.
 	 * Update sibling pointers as needed, and make the right page available for reuse.
-	 * 
+	 *
 	 * @param tid - the transaction id
 	 * @param dirtypages - the list of dirty pages which should be updated with all new dirty pages
 	 * @param leftPage - the left leaf page
@@ -944,21 +962,21 @@ public class BTreeFile implements DbFile {
 	 * @param parent - the parent of the two pages
 	 * @param parentEntry - the entry in the parent corresponding to the leftPage and rightPage
 	 * @see #deleteParentEntry(TransactionId, Map, BTreePage, BTreeInternalPage, BTreeEntry)
-	 * 
+	 *
 	 * @throws DbException
 	 * @throws IOException
 	 * @throws TransactionAbortedException
 	 */
 	public void mergeLeafPages(TransactionId tid, Map<PageId, Page> dirtypages,
-			BTreeLeafPage leftPage, BTreeLeafPage rightPage, BTreeInternalPage parent, BTreeEntry parentEntry) 
+			BTreeLeafPage leftPage, BTreeLeafPage rightPage, BTreeInternalPage parent, BTreeEntry parentEntry)
 					throws DbException, IOException, TransactionAbortedException {
-
+//		System.out.println("mergeLeafPages");
 		// some code goes here
 		//先对右孩子的结点的指针进行处理
 		if(rightPage.getRightSiblingId()!= null)
 		{
 			leftPage.setRightSiblingId(rightPage.getRightSiblingId());
-			BTreeLeafPage bTreeLeafPage = (BTreeLeafPage) getPage(tid,dirtypages,rightPage.getRightSiblingId(),Permissions.READ_ONLY);
+			BTreeLeafPage bTreeLeafPage = (BTreeLeafPage) getPage(tid,dirtypages,rightPage.getRightSiblingId(),Permissions.READ_WRITE);
 			bTreeLeafPage.setLeftSiblingId(leftPage.getId());
 		}
 		else
@@ -976,24 +994,24 @@ public class BTreeFile implements DbFile {
 		}
 
 		//将该页标记为空页
-		setEmptyPage(tid,dirtypages,rightPage.getId().getPageNumber());
+		setEmptyPage(tid,dirtypages,rightPage.pid.getPageNumber());
 
 		//删除父节点的条目
-		parent.deleteKeyAndRightChild(parentEntry);
+//		parent.deleteKeyAndRightChild(parentEntry);
+		deleteParentEntry(tid,dirtypages,leftPage,parent,parentEntry);
 
 		//更新脏页
 		dirtypages.put(leftPage.getId(), leftPage);
 		dirtypages.put(parent.getId(), parent);
-		dirtypages.put(rightPage.getId(), rightPage);
 	}
 
 	/**
-	 * Merge two internal pages by moving all entries from the right page to the left page 
-	 * and "pulling down" the corresponding key from the parent entry. 
-	 * Delete the corresponding key and right child pointer from the parent, and recursively 
+	 * Merge two internal pages by moving all entries from the right page to the left page
+	 * and "pulling down" the corresponding key from the parent entry.
+	 * Delete the corresponding key and right child pointer from the parent, and recursively
 	 * handle the case when the parent gets below minimum occupancy.
 	 * Update parent pointers as needed, and make the right page available for reuse.
-	 * 
+	 *
 	 * @param tid - the transaction id
 	 * @param dirtypages - the list of dirty pages which should be updated with all new dirty pages
 	 * @param leftPage - the left internal page
@@ -1002,45 +1020,48 @@ public class BTreeFile implements DbFile {
 	 * @param parentEntry - the entry in the parent corresponding to the leftPage and rightPage
 	 * @see #deleteParentEntry(TransactionId, Map, BTreePage, BTreeInternalPage, BTreeEntry)
 	 * @see #updateParentPointers(TransactionId, Map, BTreeInternalPage)
-	 * 
+	 *
 	 * @throws DbException
 	 * @throws IOException
 	 * @throws TransactionAbortedException
 	 */
 	public void mergeInternalPages(TransactionId tid, Map<PageId, Page> dirtypages,
-			BTreeInternalPage leftPage, BTreeInternalPage rightPage, BTreeInternalPage parent, BTreeEntry parentEntry) 
+			BTreeInternalPage leftPage, BTreeInternalPage rightPage, BTreeInternalPage parent, BTreeEntry parentEntry)
 					throws DbException, IOException, TransactionAbortedException {
-		
+//		System.out.println("mergeInternalPages");
 		// some code goes here
 		Iterator<BTreeEntry> iterator = rightPage.iterator();
 		Iterator<BTreeEntry> reverseiterator = leftPage.reverseIterator();
 
-        //首先把父亲条目插入左页,但不是插入parentEntry,要新建一个
+        //首先把父亲条目插入左页,但不是插入parentEntry否则后面删除的时候有影响,要新建一个
 		BTreeEntry newparententry = new BTreeEntry(parentEntry.getKey(),reverseiterator.next().getRightChild(), iterator.next().getLeftChild());
 		leftPage.insertEntry(newparententry);
 
-		//把父条目删除
-		parent.deleteKeyAndRightChild(parentEntry);
 
 		//把右页的条目复制到左页
 		Iterator<BTreeEntry> newiterator = rightPage.iterator();
 		while(newiterator.hasNext())
 		{
 			BTreeEntry entry = newiterator.next();
-			rightPage.deleteKeyAndRightChild(entry);
+			rightPage.deleteKeyAndLeftChild(entry);
 			leftPage.insertEntry(entry);
 		}
 
+		//更新右页带来的子节点的父节点
+		updateParentPointers(tid,dirtypages,leftPage);
+
 		//将页标记为空页
-		setEmptyPage(tid,dirtypages,rightPage.getId().getPageNumber());
+		setEmptyPage(tid,dirtypages,rightPage.pid.getPageNumber());
+
+		//把父条目删除
+//		parent.deleteKeyAndRightChild(parentEntry);
+		deleteParentEntry(tid,dirtypages,leftPage,parent,parentEntry);
 
 		//标记脏页了
 		dirtypages.put(leftPage.getId(), leftPage);
 		dirtypages.put(parent.getId(), parent);
-		dirtypages.put(rightPage.getId(), rightPage);
+//		dirtypages.remove(rightPage.getId(), rightPage);
 
-		//更新右页带来的子节点的父节点
-		updateParentPointers(tid,dirtypages,leftPage);
 	}
 	
 	/**

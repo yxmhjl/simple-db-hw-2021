@@ -299,12 +299,19 @@ public class BTreeFileDeleteTest extends SimpleDbTestBase {
 		// occupancy and cause the entries to be redistributed
 		assertEquals(62, leftChild.getNumEmptySlots());
 		for(int i = 0; i < 124; ++i) {
+			if(i==123)
+			{
+				System.out.println(111);
+			}
 			Database.getBufferPool().deleteTuple(tid, it.next());
+//			System.out.println(i);
+//			BTreeChecker.checkRep(bigFile, tid, new HashMap<>(), true);
+
 			it.rewind();
 		}
-
+		System.out.println(222);
 		BTreeChecker.checkRep(bigFile, tid, new HashMap<>(), true);
-
+		System.out.println(333);
 		assertEquals(62, leftChild.getNumEmptySlots());
 		assertEquals(62, rightChild.getNumEmptySlots());
 
@@ -325,6 +332,8 @@ public class BTreeFileDeleteTest extends SimpleDbTestBase {
 		assertEquals(0, leftChild.getNumEmptySlots());
 		assertTrue(e.getKey().compare(Op.LESS_THAN_OR_EQ, rightChild.iterator().next().getKey()));
 
+
+		System.out.println("--------------------------------");
 		// Delete tuples causing leaf pages to merge until the first internal page 
 		// gets below minimum occupancy and causes the entries to be redistributed
 		count = 0;

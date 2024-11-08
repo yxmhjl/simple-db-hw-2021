@@ -290,7 +290,6 @@ src="redist_internal.png"><br> <i>Figure 3: Redistributing pages</i> </p>
 
 <p align="center"> <img width=500 src="merging_leaf.png"><br> <img width=500
 src="merging_internal.png"><br> <i>Figure 4: Merging pages</i> </p>
-
 As described in the textbook, attempting to delete a tuple from a leaf page that
 is less than half full should cause that page to either steal tuples from one of
 its siblings or merge with one of its siblings.  If one of the page's siblings
@@ -322,6 +321,12 @@ call `setEmptyPage()` on deleted pages to make them available for reuse.  As
 with the previous exercises, we recommend using `BTreeFile.getPage()` to
 encapsulate the process of fetching pages and keeping the list of dirty pages up
 to date.
+
+如教科书中所述，尝试从一个少于半满的叶页中删除元组时，应该导致该页从其一个兄弟页中窃取元组，或者与其中一个兄弟页合并。如果该页的一个兄弟页有多余的元组，元组应该在这两个页之间均匀分布，并且父页的条目应相应更新（参见图3）。然而，如果兄弟页也处于最小占用状态，则这两个页应该合并，并从父页中删除条目（参见图4）。反过来，从父页中删除条目可能导致父页变得少于半满。在这种情况下，父页应该从其兄弟页中窃取条目或与一个兄弟页合并。这可能会导致递归合并，甚至在根节点的最后一个条目被删除时删除根节点。
+
+在这个练习中，你将在 BTreeFile.java 中实现 stealFromLeafPage()、stealFromLeftInternalPage()、stealFromRightInternalPage()、mergeLeafPages() 和 mergeInternalPages()。在前三个函数中，你将实现代码以均匀重新分配元组/条目，如果兄弟页有多余的元组/条目。记住要更新父页中相应的键字段（仔细查看图3中的处理方式——键实际上在父页中“旋转”）。在 stealFromLeftInternalPage() 和 stealFromRightInternalPage() 中，你还需要更新被移动的子页的父指针。你可以重用 updateParentPointers() 函数来实现这一点。
+
+在 mergeLeafPages() 和 mergeInternalPages() 中，你将实现代码以合并页，实际上是执行 splitLeafPage() 和 splitInternalPage() 的逆操作。你会发现 deleteParentEntry() 函数在处理所有不同的递归情况时非常有用。确保对删除的页调用 setEmptyPage() 以使其可用于重用。与之前的练习一样，我们建议使用 BTreeFile.getPage() 来封装获取页的过程，并保持脏页列表的最新状态
 
 ***
 

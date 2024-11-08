@@ -660,7 +660,8 @@ public class BufferPool {
         // some code goes here
         // not necessary for lab1
         DbFile file = Database.getCatalog().getDatabaseFile(t.getRecordId().getPageId().getTableId());
-        updateBufferPool(file.deleteTuple(tid, t), tid);
+        List<Page> pAge = file.deleteTuple(tid, t);
+        updateBufferPool(pAge, tid);
     }
 
     /**
