@@ -291,6 +291,7 @@ public class LogTest extends SimpleDbTestBase {
         // T3 inserts and commit
         // only T1 and T3 data should be there
 
+
         doInsert(hf1, 5, -1);
         dontInsert(hf1, 6);
         doInsert(hf1, 7, -1);

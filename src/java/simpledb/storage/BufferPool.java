@@ -579,22 +579,16 @@ public class BufferPool {
                 DbFile heapFile = Database.getCatalog().getDatabaseFile(page.getId().getTableId());
                 //lab56
                 Page before = page.getBeforeImage();
-                if(page.isDirty()!=null)
-                {
-                    //写回磁盘后，脏页就恢复成正常的页
-                    try {
-                        //lab6
-                        flushPage(page.getId());
-                        page.setBeforeImage();
-//                        Database.getLogFile().logWrite(tid, before, page);
-                        //lab4
-//                        heapFile.writePage(page);
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
-                    }
-//                    page.markDirty(false,tid);
+
+                //将脏页写回磁盘
+                try {
+                    //lab6
+                    flushPage(page.getId());
+                    page.setBeforeImage();
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
                 }
-                //把持有的锁释放
+                //把有的锁释放
                 unsafeReleasePage(tid, entry.getKey());
             }
         }

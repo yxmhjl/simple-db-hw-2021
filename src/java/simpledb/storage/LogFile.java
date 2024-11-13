@@ -12,6 +12,7 @@ import java.beans.beancontext.BeanContext;
 import java.io.*;
 import java.util.*;
 import java.lang.reflect.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /*
 LogFile implements the recovery subsystem of SimpleDb.  This class is
@@ -98,6 +99,9 @@ public class LogFile {
     int totalRecords = 0; // for PatchTest //protected by this
 
     final Map<Long,Long> tidToFirstLogRecord = new HashMap<>();
+
+    static List<Long> tidoffsets = new ArrayList<>();
+    ConcurrentHashMap<Long,Long> tidlists = new ConcurrentHashMap<>();
 
     /** Constructor.
         Initialize and back the log file with the specified file.
@@ -465,11 +469,7 @@ public class LogFile {
                 preAppend();
                 // some code goes here
                 //计算事务号为tid的事务在日志文件中的偏移，并移到事务号为tid的事务开始的地方
-                if(!tidToFirstLogRecord.containsKey(tid.getId()))
-                {
-                    throw new NoSuchElementException();
-                }
-                else
+                if(tidToFirstLogRecord.containsKey(tid.getId()))
                 {
                     long offset = tidToFirstLogRecord.get(tid.getId());
                     raf.seek(offset);
@@ -484,13 +484,13 @@ public class LogFile {
                                 case UPDATE_RECORD:
 
                                     Page before = readPageData(raf);
-                                    before.setBeforeImage();
-                                    readPageData(raf);
+                                    Page after = readPageData(raf);
                                     raf.readLong();
                                     if(tid.getId() == record_tid)
                                     {
                                         //如果是目标事务则将旧数据刷盘
                                         Database.getCatalog().getDatabaseFile(before.getId().getTableId()).writePage(before);
+                                        logWrite(tid,after,before);
                                         Database.getBufferPool().getnewpage(before.getId());
                                     }
                                     break;
@@ -502,13 +502,7 @@ public class LogFile {
                                     }
                                     raf.readLong();
                                     break;
-                                case BEGIN_RECORD:
-                                    raf.readLong();
-                                    break;
-                                case ABORT_RECORD:
-                                    raf.readLong();
-                                    break;
-                                case COMMIT_RECORD:
+                                default:
                                     raf.readLong();
                                     break;
                             }
@@ -518,6 +512,9 @@ public class LogFile {
                             break;
                         }
                     }
+                }
+                else {
+                    throw new NoSuchElementException();
                 }
             }
         }
@@ -545,9 +542,123 @@ public class LogFile {
         synchronized (Database.getBufferPool()) {
             synchronized (this) {
                 recoveryUndecided = false;
+
                 // some code goes here
+                //首先找到检查点,取出活跃的事务
+                raf = new RandomAccessFile(logFile, "rw");
+                long offset = raf.readLong();
+                //说明有检查点移到检查点事务中最靠前的事务的开始位置
+                if(offset != -1)
+                {
+                    //先移到检查点
+                    raf.seek(offset);
+                    //undolist开始时包括检查点的所有事务
+                    raf.readInt();
+                    raf.readLong();
+                    int numTransactions = raf.readInt();
+                    while (numTransactions-- > 0) {
+                        tidlists.put(raf.readLong(),raf.readLong());
+                    }
+                    //定位到最开始的事务的偏移
+                    long minoffset = Long.MAX_VALUE;
+                    Set<Long> keySet = tidlists.keySet();
+                    Iterator<Long> it = keySet.iterator();
+                    while (it.hasNext()) {
+                        long tid = it.next();
+                        if(tidlists.get(tid)<minoffset)
+                        {
+                            minoffset = tidlists.get(tid);
+                        }
+                    }
+                    tidoffsets.add(minoffset);
+                    raf.seek(minoffset);
+                }
+                //执行重做，执行完得到undolist
+                while(true)
+                {
+                    try{
+                        int type = raf.readInt();
+                        long record_tid = raf.readLong();
+                        switch (type)
+                        {
+                            case UPDATE_RECORD:
+                                readPageData(raf);
+                                Page after = readPageData(raf);
+                                tidoffsets.add(raf.readLong());
+                                if(tidlists.containsKey(record_tid))
+                                {
+                                    //如果是目标事务则将旧数据刷盘
+                                    Database.getCatalog().getDatabaseFile(after.getId().getTableId()).writePage(after);
+                                }
+                                break;
+                            case CHECKPOINT_RECORD:
+                                int numTransactionss = raf.readInt();
+                                while (numTransactionss-- > 0) {
+                                    raf.readLong();
+                                    raf.readLong();
+                                }
+                                tidoffsets.add(raf.readLong());
+                                break;
+                            case BEGIN_RECORD:
+                                if(!tidlists.containsKey(record_tid))
+                                {
+                                    long num = raf.readLong();
+                                    tidoffsets.add(num);
+                                    tidlists.put(record_tid, num);
+                                }
+                                else
+                                {
+                                    tidoffsets.add(raf.readLong());
+                                }
+                                break;
+                            default:
+                                tidlists.remove(record_tid);
+                                tidoffsets.add(raf.readLong());
+                                break;
+                        }
+                        //读下一条指令
+                    } catch (EOFException e) {
+                        //e.printStackTrace();
+                        break;
+                    }
+                }
+                //执行撤销阶段
+                undo();
             }
          }
+    }
+
+    public void undo() throws IOException {
+        synchronized (Database.getBufferPool()) {
+            synchronized (this) {
+                for (int i = 0; i < tidoffsets.size(); i++) {
+                    //当undolists为空的时候退出
+                    long offset = tidoffsets.get(tidoffsets.size()-1-i);
+                    raf.seek(offset);
+                    if(tidlists.size()==0)
+                    {
+                        return;
+                    }
+                    int type = raf.readInt();
+                    long record_tid = raf.readLong();
+                    switch (type)
+                    {
+                        case UPDATE_RECORD:
+                            Page before = readPageData(raf);
+                            if(tidlists.containsKey(record_tid))
+                            {
+                                //如果是目标事务则将旧数据刷盘
+                                Database.getCatalog().getDatabaseFile(before.getId().getTableId()).writePage(before);
+                            }
+                            break;
+                        case BEGIN_RECORD:
+                            //遇到事务开始标志，将该事务从undolist移除
+                            tidlists.remove(record_tid);
+                            break;
+                    }
+                }
+            }
+        }
     }
 
     /** Print out a human readable represenation of the log */
