@@ -2,9 +2,13 @@
 package simpledb.storage;
 
 import simpledb.common.Database;
+import simpledb.common.DbException;
+import simpledb.common.Permissions;
+import simpledb.transaction.TransactionAbortedException;
 import simpledb.transaction.TransactionId;
 import simpledb.common.Debug;
 
+import java.beans.beancontext.BeanContext;
 import java.io.*;
 import java.util.*;
 import java.lang.reflect.*;
@@ -460,6 +464,61 @@ public class LogFile {
             synchronized(this) {
                 preAppend();
                 // some code goes here
+                //计算事务号为tid的事务在日志文件中的偏移，并移到事务号为tid的事务开始的地方
+                if(!tidToFirstLogRecord.containsKey(tid.getId()))
+                {
+                    throw new NoSuchElementException();
+                }
+                else
+                {
+                    long offset = tidToFirstLogRecord.get(tid.getId());
+                    raf.seek(offset);
+                    //顺序读取日志记录，找到该事务的修改日志
+                    while(true)
+                    {
+                        try{
+                            int type = raf.readInt();
+                            long record_tid = raf.readLong();
+                            switch (type)
+                            {
+                                case UPDATE_RECORD:
+
+                                    Page before = readPageData(raf);
+                                    before.setBeforeImage();
+                                    readPageData(raf);
+                                    raf.readLong();
+                                    if(tid.getId() == record_tid)
+                                    {
+                                        //如果是目标事务则将旧数据刷盘
+                                        Database.getCatalog().getDatabaseFile(before.getId().getTableId()).writePage(before);
+                                        Database.getBufferPool().getnewpage(before.getId());
+                                    }
+                                    break;
+                                case CHECKPOINT_RECORD:
+                                    int numTransactions = raf.readInt();
+                                    while (numTransactions-- > 0) {
+                                        raf.readLong();
+                                        raf.readLong();
+                                    }
+                                    raf.readLong();
+                                    break;
+                                case BEGIN_RECORD:
+                                    raf.readLong();
+                                    break;
+                                case ABORT_RECORD:
+                                    raf.readLong();
+                                    break;
+                                case COMMIT_RECORD:
+                                    raf.readLong();
+                                    break;
+                            }
+                            //读下一条指令
+                        } catch (EOFException e) {
+                            //e.printStackTrace();
+                            break;
+                        }
+                    }
+                }
             }
         }
     }

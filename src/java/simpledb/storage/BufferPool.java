@@ -577,15 +577,22 @@ public class BufferPool {
             {
                 Page page = entry.getValue().value;
                 DbFile heapFile = Database.getCatalog().getDatabaseFile(page.getId().getTableId());
+                //lab56
+                Page before = page.getBeforeImage();
                 if(page.isDirty()!=null)
                 {
                     //写回磁盘后，脏页就恢复成正常的页
                     try {
-                        heapFile.writePage(page);
+                        //lab6
+                        flushPage(page.getId());
+                        page.setBeforeImage();
+//                        Database.getLogFile().logWrite(tid, before, page);
+                        //lab4
+//                        heapFile.writePage(page);
                     } catch (IOException e) {
                         throw new RuntimeException(e);
                     }
-                    page.markDirty(false,tid);
+//                    page.markDirty(false,tid);
                 }
                 //把持有的锁释放
                 unsafeReleasePage(tid, entry.getKey());
@@ -690,7 +697,12 @@ public class BufferPool {
     public synchronized void flushAllPages() throws IOException {
         // some code goes here
         // not necessary for lab1
-
+        for (Map.Entry<PageId, LRUCache.Node> group : lruCache.getEntrySet()) {
+            Page page = group.getValue().value;
+            if (page.isDirty() != null) {
+                this.flushPage(group.getKey());
+            }
+        }
     }
 
     /** Remove the specific page id from the buffer pool.
@@ -704,6 +716,7 @@ public class BufferPool {
     public synchronized void discardPage(PageId pid) {
         // some code goes here
         // not necessary for lab1
+
     }
 
     /**
@@ -713,6 +726,16 @@ public class BufferPool {
     private synchronized  void flushPage(PageId pid) throws IOException {
         // some code goes here
         // not necessary for lab1
+        Page target = lruCache.get(pid);
+        if(target == null){
+            return;
+        }
+        TransactionId tid = target.isDirty();
+        if (tid != null) {
+            Page before = target.getBeforeImage();
+            Database.getLogFile().logWrite(tid, before,target);
+            Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(target);
+        }
     }
 
     /** Write all pages of the specified transaction to disk.
@@ -720,6 +743,19 @@ public class BufferPool {
     public synchronized  void flushPages(TransactionId tid) throws IOException {
         // some code goes here
         // not necessary for lab1|lab2
+        for (Map.Entry<PageId, LRUCache.Node> group : this.lruCache.getEntrySet()) {
+            PageId pid = group.getKey();
+            Page flushPage = group.getValue().value;
+            TransactionId flushPageDirty = flushPage.isDirty();
+            Page before = flushPage.getBeforeImage();
+            // 涉及到事务就应该setBeforeImage
+            flushPage.setBeforeImage();
+            if (flushPageDirty != null && flushPageDirty.equals(tid)) {
+                Database.getLogFile().logWrite(tid, before, flushPage);
+                Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(flushPage);
+
+            }
+        }
     }
 
     /**
@@ -836,4 +872,14 @@ public class BufferPool {
         }
     }
 
+
+    public void getnewpage(PageId pid)
+    {
+        Page page = null;
+        DbFile file = Database.getCatalog().getDatabaseFile(pid.getTableId());
+        page = file.readPage(pid);
+        //在原位替换，而不是添加，添加可能会挤掉一些页面。
+        lruCache.map.get(pid).value = page;
+    }
 }
+

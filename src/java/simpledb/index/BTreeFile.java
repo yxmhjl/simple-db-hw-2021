@@ -276,7 +276,6 @@ public class BTreeFile implements DbFile {
 				needshifttuple--;
 			}
 		}
-
 		//将新页面和老页面连接起来，更新左右指针
 		BTreePageId bid = page.getRightSiblingId();
 		BTreeLeafPage rightsiblingpage = null;
@@ -295,7 +294,6 @@ public class BTreeFile implements DbFile {
 		BTreeEntry e = new BTreeEntry(newbTreeLeafPage.iterator().next().getField(newbTreeLeafPage.keyField),page.getId(),newbTreeLeafPage.getId());
 		parentinternal.insertEntry(e);
 		newbTreeLeafPage.setParentId(parentinternal.getId());
-		updateParentPointers(tid,dirtypages,parentinternal);
 
 		//将脏页加入脏页列表
 		dirtypages.put(parentinternal.getId(),parentinternal);
@@ -990,8 +988,6 @@ public class BTreeFile implements DbFile {
 		setEmptyPage(tid,dirtypages,rightPage.pid.getPageNumber());
 
 		//删除父节点的条目
-//		parent.deleteKeyAndRightChild(parentEntry);
-//		updateParentPointers(tid,dirtypages,parent);
 		deleteParentEntry(tid,dirtypages,leftPage,parent,parentEntry);
 
 		//更新脏页
@@ -1048,14 +1044,11 @@ public class BTreeFile implements DbFile {
 		setEmptyPage(tid,dirtypages,rightPage.pid.getPageNumber());
 
 		//把父条目删除
-//		parent.deleteKeyAndRightChild(parentEntry);
 		deleteParentEntry(tid,dirtypages,leftPage,parent,parentEntry);
 
 		//标记脏页了
 		dirtypages.put(leftPage.getId(), leftPage);
 		dirtypages.put(parent.getId(), parent);
-//		dirtypages.remove(rightPage.getId(), rightPage);
-
 	}
 	
 	/**
