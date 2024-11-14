@@ -37,6 +37,8 @@ only at commit time. Logging allows more flexible buffer management
 `BufferPool.flushAllPages()`
 at certain points in order to exercise that flexibility.
 
+
+
 ## 1. Getting started
 
 You should begin with the code you submitted for Lab 5 (if you did not
@@ -75,6 +77,7 @@ Here's what to do:
    for each page that a committed transaction dirtied. For each such
    page, add a call to `p.setBeforeImage()` after you have flushed
    the page:
+   
    ```
    // use current page contents as the before-image
    // for the next transaction that modifies this page.
@@ -152,6 +155,15 @@ pool whose before-image you write back to the table file.
 
 As you develop your code, you may find the `Logfile.print()`
 method useful for displaying the current contents of the log.
+
+在 LogFile.java 中，你应该会看到一组函数，例如 logCommit()，它们生成每种类型的日志记录并将其追加到日志文件中。
+
+你的第一个任务是在 LogFile.java 中实现 rollback() 函数。当事务中止时，在事务释放其锁之前调用此函数。它的任务是撤销事务可能对数据库所做的任何更改。
+
+实现 rollback() 函数
+你的 rollback() 函数应该读取日志文件，找到与中止事务相关的所有更新记录，从中提取前像（before-image），并将前像写回到表文件中。使用 raf.seek() 在日志文件中移动，并使用 raf.readInt() 等方法检查日志文件。使用 readPageData() 读取每个前像和后像（after-image）。你可以使用映射 tidToFirstLogRecord（从事务ID映射到堆文件中的偏移量）来确定从何处开始读取特定事务的日志文件。你需要确保丢弃任何从缓冲池中读取的前像并写回到表文件的页面。
+
+在开发代码的过程中，你可能会发现 Logfile.print() 方法对于显示当前日志内容非常有用。
 
 
 ***

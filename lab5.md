@@ -105,7 +105,6 @@ an extra argument to track the list of dirty pages.  This function will be
 important for the next two exercises in which you will actually update the data
 and therefore need to keep track of dirty pages.
 
-
 Every internal (non-leaf) page your `findLeafPage()` implementation visits
 should be fetched with READ_ONLY permission, except the returned leaf page,
 which should be fetched with the permission provided as an argument to the

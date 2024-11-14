@@ -496,11 +496,7 @@ public class LogFile {
                                     break;
                                 case CHECKPOINT_RECORD:
                                     int numTransactions = raf.readInt();
-                                    while (numTransactions-- > 0) {
-                                        raf.readLong();
-                                        raf.readLong();
-                                    }
-                                    raf.readLong();
+                                    raf.seek(raf.getFilePointer()+(numTransactions+1)*8);
                                     break;
                                 default:
                                     raf.readLong();
@@ -593,27 +589,18 @@ public class LogFile {
                                 break;
                             case CHECKPOINT_RECORD:
                                 int numTransactionss = raf.readInt();
-                                while (numTransactionss-- > 0) {
-                                    raf.readLong();
-                                    raf.readLong();
-                                }
-                                tidoffsets.add(raf.readLong());
+                                raf.seek(raf.getFilePointer()+(numTransactionss+1)*8);
                                 break;
                             case BEGIN_RECORD:
+                                tidoffsets.add(raf.readLong());
                                 if(!tidlists.containsKey(record_tid))
                                 {
-                                    long num = raf.readLong();
-                                    tidoffsets.add(num);
-                                    tidlists.put(record_tid, num);
-                                }
-                                else
-                                {
-                                    tidoffsets.add(raf.readLong());
+                                    tidlists.put(record_tid, tidoffsets.get(tidoffsets.size()-1));
                                 }
                                 break;
-                            default:
+                            default://提交或回滚事务结束的不用处理
                                 tidlists.remove(record_tid);
-                                tidoffsets.add(raf.readLong());
+                                raf.readLong();
                                 break;
                         }
                         //读下一条指令
